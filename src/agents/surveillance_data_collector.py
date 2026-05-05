@@ -1,30 +1,63 @@
-from pathlib import Path
-from typing import Dict, Any, Optional
+"""
+Deterministic surveillance data collector.
 
-from langchain.agents import AgentExecutor, create_react_agent
-from langchain_core.prompts import PromptTemplate
+Drives a four-step workflow (build query, cache lookup, run query, save) without
+an LLM in the loop.
+"""
+
+import json
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
 
 from src.config.logger import logger
 from src.config.settings import LangChainSettings
-from src.llm.surveillance_llm import create_surveillance_llm
 from src.memory.store import MemoryStore
+from src.tools.io_tools import save_overpass_dump
 from src.tools.surveillance_data_collector_tools import (
     create_surveillance_data_collector_tools,
 )
+from src.utils.db import payload_hash, query_hash
+from src.utils.overpass import build_query, run_query
+
+
+class ScrapeError(RuntimeError):
+    """
+    Raised when the scrape step fails permanently.
+
+    Carries the originating stage and detail so the orchestrator and the API
+    layer can surface a precise error to the caller. Transient failures
+    (HTTP 429 / 5xx, connection errors, timeouts) are retried inside
+    `src.utils.overpass.run_query` via `with_retry` and never reach this
+    exception.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        city: str,
+        stage: str,
+        detail: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.city = city
+        self.stage = stage  # one of: "build_query", "run_query", "save"
+        self.detail = detail
 
 
 class SurveillanceDataCollector:
     """
-    Surveillance data collector agent for gathering camera data from OpenStreetMap.
+    Deterministic Overpass scraper for `man_made=surveillance` features.
 
-    This agent collects surveillance camera data using the Overpass API with
-    intelligent caching and robust error handling.
+    Workflow per call to :py:meth:`scrape`:
 
-    Features:
-    - ReAct-based tool execution with reliable parsing
-    - Direct parameter passing for tool inputs
-    - Intelligent caching to avoid redundant API calls
-    - Comprehensive error handling and recovery
+    1. ``build_query(city, country)`` — construct the Overpass QL query.
+    2. Cache lookup against ``MemoryStore`` (verifies file existence and
+       payload hash).
+    3. On miss, ``run_query(query)`` — POST to Overpass; transient errors are
+       retried by the underlying ``with_retry`` decorator.
+    4. Persist the response with ``save_overpass_dump`` and record the cache
+       entry.
     """
 
     def __init__(
@@ -32,205 +65,188 @@ class SurveillanceDataCollector:
         name: str,
         memory: MemoryStore,
         settings: Optional[LangChainSettings] = None,
-    ):
+    ) -> None:
         """
-        Initialize the surveillance data collector agent.
-
-        :param name: Agent name for identification and caching
-        :param memory: Memory store for caching query results
-        :param settings: Optional LangChain settings for LLM configuration
+        :param name: Agent identifier (used as the memory namespace).
+        :param memory: Shared :class:`MemoryStore` for cache entries.
+        :param settings: Retained for API compatibility with the previous
+            implementation; unused on the deterministic path.
         """
         self.name = name
         self.memory = memory
         self.settings = settings or LangChainSettings()
 
-        # Create LLM
-        self.llm = create_surveillance_llm(self.settings)
-
-        # Create surveillance data collection tools with memory access
+        # Tools are kept available so that callers introspecting `self.tools`
+        # (e.g. existing tests, external integrations) keep working. The
+        # scrape() flow below does not invoke them.
         self.tools = create_surveillance_data_collector_tools(memory)
 
-        # Load simplified prompt template
-        self.prompt = self._load_prompt_template()
-
-        # Create ReAct agent with simplified setup
-        self.agent = create_react_agent(
-            llm=self.llm.llm,  # Use the underlying Ollama LLM
-            tools=self.tools,
-            prompt=self.prompt,
-        )
-
-        # Create agent executor with tight error handling
-        self.executor = AgentExecutor(
-            agent=self.agent,
-            tools=self.tools,
-            verbose=self.settings.agent_verbose,
-            max_iterations=self.settings.agent_max_iterations,
-            max_execution_time=self.settings.agent_max_execution_time,
-            handle_parsing_errors=True,
-            return_intermediate_steps=True,
-        )
-
-        logger.info(f"Initialized {self.name} with {len(self.tools)} simplified tools")
-
-    @staticmethod
-    def _load_prompt_template() -> PromptTemplate:
-        """
-        Load the simplified scraper agent prompt template.
-
-        :return: Configured PromptTemplate for the agent
-        """
-        # Use tested hardcoded template (file loading causes ReAct parsing issues)
-        template = """You are a surveillance data collector. Collect camera data from cities efficiently.
-
-Available tools: {tools}
-Tool names: {tool_names}
-
-FORMAT: Use this EXACT format:
-
-Thought: [your reasoning]
-Action: [exact tool name]
-Action Input: {{"param": "value"}}
-Observation: [result appears automatically]
-
-Repeat Thought/Action/Action Input/Observation until complete, then:
-
-Thought: I have completed the task
-Final Answer: [brief 1-sentence summary with element count and filepath]
-
-WORKFLOW:
-1. Build query → 2. Check cache
-   → If cache HIT: STOP. Task complete (data already saved at filepath)
-   → If cache MISS: 3. Download → 4. Save
-
-RULES:
-- Use exact JSON format: {{"param": "value"}}
-- CRITICAL: If cache hits (cache_hit: true), STOP immediately. Do NOT call save_overpass_data.
-- Cache hit means data is already saved - filepath is in the cache response
-- Only download and save if cache miss (cache_hit: false)
-- Keep Final Answer brief (one sentence)
-
-Question: {input}
-{agent_scratchpad}"""
-
-        return PromptTemplate(
-            template=template,
-            input_variables=["input", "tools", "tool_names", "agent_scratchpad"],
+        logger.info(
+            f"Initialized {self.name} (deterministic scrape path, no LLM in loop)"
         )
 
     def scrape(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Scrape surveillance data for a city using the simplified agent.
+        Scrape surveillance data for a city.
 
-        :param input_data: Dict with 'city', optional 'country', 'overpass_dir'
-        :return: Dict with scraping results including data, cache status, filepath
+        :param input_data: Dict with ``city`` (required), optional ``country``
+            and ``overpass_dir``.
+        :return: Result dict with at minimum ``city``, ``success``,
+            ``elements_count``, and either ``filepath`` (fresh save),
+            ``cached_path`` (cache hit), or ``error`` / ``empty`` on failure.
+        :raises ScrapeError: On permanent failure at the build, run, or save
+            stage. The orchestrator catches this and converts it to a failed
+            pipeline result.
         """
-        city = input_data["city"]
-        country = input_data.get("country")
+        city: str = input_data["city"]
+        country: Optional[str] = input_data.get("country")
         overpass_dir = input_data.get("overpass_dir", "overpass_data")
 
-        # Prepare directory structure
         city_dir = Path(overpass_dir) / city.lower().replace(" ", "_")
         city_dir.mkdir(parents=True, exist_ok=True)
 
-        # Build simple input for agent
-        country_info = f" in {country}" if country else ""
-        agent_input = {
-            "input": f"Collect surveillance camera data for {city}{country_info}. Save to directory: {city_dir}"
-        }
+        country_info = f", {country}" if country else ""
+        logger.info(f"Starting scrape for {city}{country_info}")
 
-        try:
-            logger.info(f"Starting scrape for {city}{country_info}")
+        query = self._build_query(city, country)
 
-            # Execute agent
-            result = self.executor.invoke(agent_input)
-
-            # Extract results
-            final_answer = result.get("output", "")
-            intermediate_steps = result.get("intermediate_steps", [])
-
-            # Parse results from intermediate steps to build response
-            response = {
+        cached = self._lookup_cache(query)
+        if cached is not None:
+            cached_path, elements_count = cached
+            logger.info(
+                f"Cache hit for {city}: {elements_count} elements at {cached_path}"
+            )
+            return {
                 "city": city,
+                "country": country,
                 "city_dir": str(city_dir),
-                "agent_output": final_answer,
                 "success": True,
+                "cache_hit": True,
+                "cached_path": str(cached_path),
+                "elements_count": elements_count,
             }
 
-            # Try to extract key information from steps
-            for step in intermediate_steps:
-                action, observation = step
-                tool_name = action.tool
+        data = self._run_query(city, query)
+        elements_count = len(data.get("elements", []))
 
-                if tool_name == "check_query_cache":
-                    try:
-                        import json
-
-                        cache_result = (
-                            json.loads(observation)
-                            if isinstance(observation, str)
-                            else observation
-                        )
-                        if cache_result.get("cache_hit"):
-                            response["cache_hit"] = True
-                            response["cached_path"] = cache_result.get("filepath")
-                            response["elements_count"] = cache_result.get(
-                                "elements_count", 0
-                            )
-                            if "data" in cache_result:
-                                response["data"] = cache_result["data"]
-                    except (json.JSONDecodeError, AttributeError):
-                        logger.warning(f"Could not parse cache result: {observation}")
-
-                elif tool_name == "save_overpass_data":
-                    try:
-                        import json
-
-                        save_result = (
-                            json.loads(observation)
-                            if isinstance(observation, str)
-                            else observation
-                        )
-                        response["cache_hit"] = False
-                        response["empty"] = save_result.get("empty", False)
-                        if not save_result.get("empty"):
-                            response["filepath"] = save_result.get("filepath")
-                            response["elements_count"] = save_result.get(
-                                "elements_count", 0
-                            )
-                    except (json.JSONDecodeError, AttributeError):
-                        logger.warning(f"Could not parse save result: {observation}")
-
-            logger.info(f"Scrape completed for {city}")
-            return response
-
-        except Exception as e:
-            error_msg = str(e)
-
-            # Detect connection errors to LLM service
-            if "Connection refused" in error_msg or "ConnectionError" in str(type(e)):
-                logger.error(
-                    f"Scraping failed for {city}: Cannot connect to LLM service (Ollama). "
-                    f"Error: {error_msg}. "
-                    f"Please ensure Ollama is running and accessible."
-                )
-            else:
-                logger.error(f"Scraping failed for {city}: {error_msg}")
-
+        if elements_count == 0:
+            logger.warning(f"No surveillance elements found for {city}")
+            self.memory.store(
+                self.name,
+                "empty",
+                f"{city}|{country or ''}|{query_hash(query)}",
+            )
             return {
                 "city": city,
                 "country": country,
                 "city_dir": str(city_dir),
                 "success": False,
-                "error": error_msg,
-                "agent_output": f"Error: {error_msg}",
+                "cache_hit": False,
+                "empty": True,
+                "elements_count": 0,
+                "error": f"No surveillance data found for {city}",
             }
+
+        saved_path = self._save(city, city_dir, data)
+
+        self.memory.store(
+            self.name,
+            "cache",
+            f"{query_hash(query)}|{saved_path}|{payload_hash(data)}",
+        )
+        logger.info(f"Saved {elements_count} elements to {saved_path}")
+
+        return {
+            "city": city,
+            "country": country,
+            "city_dir": str(city_dir),
+            "success": True,
+            "cache_hit": False,
+            "filepath": str(saved_path),
+            "elements_count": elements_count,
+        }
+
+    def _build_query(self, city: str, country: Optional[str]) -> str:
+        try:
+            return build_query(city, country=country)
+        except Exception as e:
+            detail = str(e)
+            logger.error(f"Failed to build Overpass query for {city}: {detail}")
+            raise ScrapeError(
+                f"Failed to build Overpass query for {city}: {detail}",
+                city=city,
+                stage="build_query",
+                detail=detail,
+            ) from e
+
+    @staticmethod
+    def _run_query(city: str, query: str) -> Dict[str, Any]:
+        try:
+            return run_query(query)
+        except Exception as e:
+            detail = str(e)
+            logger.error(f"Overpass query failed for {city}: {detail}")
+            raise ScrapeError(
+                f"Overpass query failed for {city}: {detail}",
+                city=city,
+                stage="run_query",
+                detail=detail,
+            ) from e
+
+    @staticmethod
+    def _save(city: str, city_dir: Path, data: Dict[str, Any]) -> Path:
+        try:
+            return save_overpass_dump(data, city, city_dir)
+        except Exception as e:
+            detail = str(e)
+            logger.error(f"Failed to save scrape data for {city}: {detail}")
+            raise ScrapeError(
+                f"Failed to save scrape data for {city}: {detail}",
+                city=city,
+                stage="save",
+                detail=detail,
+            ) from e
+
+    def _lookup_cache(self, query: str) -> Optional[Tuple[Path, int]]:
+        q_hash = query_hash(query)
+        for mem in self.memory.load(self.name):
+            if mem.step != "cache" or not mem.content.startswith(q_hash):
+                continue
+            try:
+                _, filepath_str, p_hash = mem.content.split("|")
+            except ValueError:
+                logger.debug(f"Skipping malformed cache entry: {mem.content[:80]}")
+                continue
+            filepath = Path(filepath_str)
+            if not filepath.exists():
+                logger.debug(f"Cache file missing on disk: {filepath}")
+                continue
+            try:
+                with filepath.open(encoding="utf-8") as f:
+                    data = json.load(f)
+            except (OSError, json.JSONDecodeError) as e:
+                logger.warning(f"Failed to read cache file {filepath}: {e}")
+                continue
+            if payload_hash(data) != p_hash:
+                logger.warning(f"Cache integrity check failed for {filepath}")
+                continue
+            return filepath, len(data.get("elements", []))
+        return None
 
     def achieve_goal(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Compatibility method with existing Agent interface.
+        Compatibility shim with the older ``Agent`` interface used elsewhere.
 
-        :param input_data: Dict with scraping parameters
-        :return: Dict with scraping results
+        Converts a raised :class:`ScrapeError` into a failure dict so callers
+        that don't expect exceptions still get a structured response.
         """
-        return self.scrape(input_data)
+        try:
+            return self.scrape(input_data)
+        except ScrapeError as e:
+            return {
+                "city": e.city,
+                "country": input_data.get("country"),
+                "success": False,
+                "error": str(e),
+                "stage": e.stage,
+            }

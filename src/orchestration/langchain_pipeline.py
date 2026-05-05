@@ -172,7 +172,9 @@ class SurveillancePipeline:
                     logger.info(f"Pipeline cancelled before analysis for {city}")
                     return self._finalize_results(results, PipelineStatus.CANCELLED)
 
-                analyze_result = self._run_analyzer(data_path)
+                analyze_result = self._run_analyzer(
+                    data_path, scrape_result=results.get("scrape")
+                )
                 results["analyze"] = analyze_result
 
                 # Handle analysis result (cancellation check + error handling)
@@ -257,9 +259,10 @@ class SurveillancePipeline:
 
         logger.info(f"Scraping data for {city}")
 
-        scrape_input = {
+        scrape_input: Dict[str, Any] = {
             "city": city,
             "overpass_dir": output_dir,
+            "force_refresh": self.config.force_refresh,
         }
         if country:
             scrape_input["country"] = country
@@ -298,17 +301,43 @@ class SurveillancePipeline:
                 "country": country,
             }
 
-    def _run_analyzer(self, data_path: str) -> Dict[str, Any]:
+    def _run_analyzer(
+        self,
+        data_path: str,
+        scrape_result: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """
-        Execute the analyzer agent.
+        Execute the analyzer agent, or short-circuit when scrape data is
+        unchanged from the prior run.
 
-        :param data_path: Path to scraped data
-        :return: Analyzer results
+        Skip path: when ``scrape_result["changed"] is False`` and the prior
+        enriched outputs are still on disk next to ``data_path``, return a
+        synthetic success result pointing at those files. The expensive LLM
+        enrichment is the dominant cost here; reusing prior outputs when the
+        underlying OSM data is identical is the whole point of probe-and-
+        compare.
+
+        :param data_path: Path to scraped data (may be cache-served).
+        :param scrape_result: The orchestrator's ``results["scrape"]`` dict;
+            consulted for ``changed`` and metadata propagation.
+        :return: Analyzer results.
         """
         # Check for cancellation at entry
         if self._check_cancellation():
             logger.info(f"Pipeline cancelled at analyzer entry for {data_path}")
             return {"success": False, "error": "Pipeline cancelled", "cancelled": True}
+
+        # Probe-and-compare skip: scrape said nothing changed and prior
+        # enriched outputs are still on disk → reuse them.
+        skip = self._maybe_skip_analyzer(data_path, scrape_result)
+        if skip is not None:
+            self.status = PipelineStatus.ANALYZING
+            self.current_step = "analyzing"
+            logger.info(
+                f"Analyzer skipped: scrape unchanged "
+                f"({skip['element_count']} cameras); reusing {skip['enriched_path']}"
+            )
+            return skip
 
         self.status = PipelineStatus.ANALYZING
         self.current_step = "analyzing"
@@ -339,6 +368,65 @@ class SurveillancePipeline:
                 "error": str(e),
                 "path": data_path,
             }
+
+    @staticmethod
+    def _maybe_skip_analyzer(
+        data_path: str,
+        scrape_result: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """
+        If scrape reports unchanged data and prior enriched outputs exist,
+        synthesize an analyzer-success dict that points at them.
+
+        Returns ``None`` if the analyzer should run normally — either because
+        ``changed`` is True/missing or the prior enriched files are gone.
+        """
+        if not scrape_result or scrape_result.get("changed") is not False:
+            return None
+
+        data = Path(data_path)
+        enriched_json = data.with_name(data.stem + "_enriched.json")
+        enriched_geojson = data.with_name(data.stem + "_enriched.geojson")
+
+        # The geojson is the only artifact downstream stages (routing) require.
+        # If it's missing we cannot honor the skip even if the underlying OSM
+        # data is unchanged — fall through to a normal analyzer run that
+        # rebuilds it.
+        if not enriched_geojson.exists():
+            logger.info(
+                f"Cannot skip analyzer: prior enriched geojson missing at "
+                f"{enriched_geojson}; will re-run."
+            )
+            return None
+
+        result: Dict[str, Any] = {
+            "success": True,
+            "path": str(data),
+            "element_count": scrape_result.get("elements_count", 0),
+            "cache_hit": True,
+            "skipped": True,
+            "skipped_reason": "scrape_unchanged",
+            "geojson_path": str(enriched_geojson),
+        }
+        if enriched_json.exists():
+            result["enriched_path"] = str(enriched_json)
+
+        # Surface the other prior visualizations if they're still on disk so
+        # the API/UI can link to them. Patterns mirror what the analyzer
+        # writes today.
+        city_dir = data.parent
+        stem = data.stem
+        for key, name in (
+            ("heatmap_path", f"{stem}_heatmap.html"),
+            ("hotspots_path", f"hotspots_{stem}.geojson"),
+            ("hotspots_chart", f"hotspot_plot_{stem}.png"),
+            ("pie_chart_path", f"stats_chart_{stem}.png"),
+        ):
+            candidate = city_dir / name
+            if candidate.exists():
+                result[key] = str(candidate)
+
+        return result
 
     def _run_router(
         self,

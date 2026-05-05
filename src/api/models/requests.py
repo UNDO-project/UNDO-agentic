@@ -161,3 +161,11 @@ class PipelineRequest(BaseModel):
         default=None,
         description="Optional routing configuration (enables routing when provided)",
     )
+    force_refresh: bool = Field(
+        default=False,
+        description=(
+            "Bypass the scrape cache and refetch from Overpass even if a "
+            "valid cache entry exists for this city. Use to capture cameras "
+            "newly tagged in OSM before the configured TTL expires."
+        ),
+    )

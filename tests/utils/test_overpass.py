@@ -14,19 +14,33 @@ from tests.conftest import _DummyResp
 def test_best_area_candidate_priorities():
     rel_city = {"osm_type": "relation", "osm_id": 7, "extratags": {"admin_level": "8"}}
     rel_generic = {"osm_type": "relation", "osm_id": 99}
+    way = {"osm_type": "way", "osm_id": 12}
     node = {"osm_type": "node", "osm_id": 5}
 
-    assert best_area_candidate([rel_city, rel_generic, node]) == (7, "relation")
-    assert best_area_candidate([rel_generic, node]) == (99, "relation")
-    assert best_area_candidate([node]) == (5, "node")
+    assert best_area_candidate([rel_city, rel_generic, way, node]) == (7, "relation")
+    assert best_area_candidate([rel_generic, way, node]) == (99, "relation")
+    assert best_area_candidate([way, node]) == (12, "way")
+
+
+def test_best_area_candidate_rejects_node_only_results():
+    # Overpass cannot derive areas from nodes; refuse rather than silently
+    # producing a non-existent area id.
+    node = {"osm_type": "node", "osm_id": 5}
+    with pytest.raises(RuntimeError, match="No usable boundary candidate"):
+        best_area_candidate([node])
 
 
 @pytest.mark.parametrize(
     ("osm_type", "expected"),
-    [("node", 1_600_000_123), ("way", 2_400_000_123), ("relation", 3_600_000_123)],
+    [("way", 2_400_000_123), ("relation", 3_600_000_123)],
 )
 def test_area_id(osm_type, expected):
     assert area_id(123, osm_type) == expected
+
+
+def test_area_id_rejects_node():
+    with pytest.raises(ValueError, match="'node'"):
+        area_id(123, "node")
 
 
 def test_nominatim_city_success(patch_requests, ovp_settings):

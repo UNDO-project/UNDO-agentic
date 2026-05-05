@@ -64,3 +64,29 @@ class MemoryStore:
         except Exception as e:
             logger.error(f"Failed to load memories for {agent_id}: {e}")
             raise
+
+    def touch(self, memory_id: int) -> None:
+        """
+        Refresh a memory row's timestamp to ``now``.
+
+        Used by the scrape probe-and-compare flow: when Overpass returns
+        identical data after the cache TTL expires, we extend the existing
+        row's lifetime instead of inserting a duplicate.
+
+        :param memory_id: Primary key of the row to touch.
+        """
+        from datetime import datetime, timezone
+
+        try:
+            with Session(self.engine) as session:
+                row = session.get(Memory, memory_id)
+                if row is None:
+                    logger.warning(f"touch: memory id={memory_id} not found")
+                    return
+                row.timestamp = datetime.now(timezone.utc)
+                session.add(row)
+                session.commit()
+            logger.debug(f"Touched memory id={memory_id}")
+        except Exception as e:
+            logger.error(f"Failed to touch memory id={memory_id}: {e}")
+            raise

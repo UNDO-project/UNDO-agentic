@@ -3,7 +3,10 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 
-from src.agents.surveillance_data_collector import SurveillanceDataCollector
+from src.agents.surveillance_data_collector import (
+    ScrapeError,
+    SurveillanceDataCollector,
+)
 from src.agents.langchain_analyzer import SurveillanceAnalyzerAgent
 from src.agents.route_finder_agent import RouteFinderAgent
 from src.config.logger import logger
@@ -269,37 +272,30 @@ class SurveillancePipeline:
                     f"Scraping completed: {result.get('elements_count', 0)} elements"
                 )
             else:
-                error_msg = result.get("error", "Unknown error")
-
-                # Provide helpful context for common errors
-                if "Connection refused" in error_msg or "ConnectionError" in error_msg:
-                    logger.error(
-                        f"Scraping failed: Cannot connect to LLM service. "
-                        f"Error: {error_msg}. "
-                        f"Please ensure Ollama is running (try: ollama serve)"
-                    )
-                else:
-                    logger.error(f"Scraping failed: {error_msg}")
+                logger.error(f"Scraping failed: {result.get('error', 'Unknown error')}")
 
             return result
 
-        except Exception as e:
-            error_msg = str(e)
-
-            # Provide helpful context for common exceptions
-            if "Connection refused" in error_msg or "ConnectionError" in str(type(e)):
-                logger.error(
-                    f"Scraper exception: Cannot connect to LLM service. "
-                    f"Error: {error_msg}. "
-                    f"Please ensure Ollama is running (try: ollama serve)"
-                )
-            else:
-                logger.error(f"Scraper exception: {error_msg}")
-
+        except ScrapeError as e:
+            # Permanent Overpass / build / save failure. The exception already
+            # carries a precise message; surface it verbatim so the API layer
+            # can show the underlying Overpass response.
+            logger.error(f"Scraper {e.stage} failed for {city}: {e}")
             return {
                 "success": False,
-                "error": error_msg,
+                "error": str(e),
+                "stage": e.stage,
                 "city": city,
+                "country": country,
+            }
+
+        except Exception as e:
+            logger.error(f"Unexpected scraper exception for {city}: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "city": city,
+                "country": country,
             }
 
     def _run_analyzer(self, data_path: str) -> Dict[str, Any]:

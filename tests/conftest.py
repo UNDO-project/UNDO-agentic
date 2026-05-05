@@ -117,14 +117,36 @@ def patch_requests(monkeypatch):
 class MemoryStoreFake:
     def __init__(self):
         self.rows = []
+        self._next_id = 1
 
     def store(self, agent_id: str, step: str, content: str):
-        row = SimpleNamespace(agent_id=agent_id, step=step, content=content)
+        # Mirror the real `Memory` SQLModel default_factory so cache TTL
+        # checks can read `row.timestamp` regardless of which store impl
+        # the code under test happens to use. Each row also gets a synthetic
+        # `id` so `touch(memory_id)` works against the fake.
+        from datetime import datetime, timezone
+
+        row = SimpleNamespace(
+            id=self._next_id,
+            agent_id=agent_id,
+            step=step,
+            content=content,
+            timestamp=datetime.now(timezone.utc),
+        )
+        self._next_id += 1
         self.rows.append(row)
         return row
 
     def load(self, agent_id: str):
         return [r for r in self.rows if r.agent_id == agent_id]
+
+    def touch(self, memory_id: int) -> None:
+        from datetime import datetime, timezone
+
+        for row in self.rows:
+            if row.id == memory_id:
+                row.timestamp = datetime.now(timezone.utc)
+                return
 
 
 @pytest.fixture

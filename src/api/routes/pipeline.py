@@ -19,6 +19,98 @@ from src.config.logger import logger
 router = APIRouter(prefix="/pipeline")
 
 
+async def _broadcast_cache_status(task_id: str, scrape_result) -> None:
+    """
+    Broadcast a `cache_status` WebSocket event derived from the scraper result.
+
+    Carries probe-and-compare metadata so the frontend can distinguish:
+      - Fresh cache hit (no Overpass call): "Showing cached data, 4h old"
+      - Probed, unchanged: "OSM returned the same N cameras; using cached
+        analysis"
+      - Probed, changed: "OSM returned N cameras (Δ +6); refreshing analysis"
+
+    Skipped if the scraper did not run or did not produce cache metadata
+    (e.g. build-stage failure before any cache decision was made).
+    """
+    if not isinstance(scrape_result, dict) or "cache_hit" not in scrape_result:
+        return
+
+    cache_hit = scrape_result["cache_hit"]
+    probed = scrape_result.get("probed", False)
+    changed = scrape_result.get("changed", not cache_hit)
+    elements = scrape_result.get("elements_count", 0)
+    previous = scrape_result.get("previous_elements_count")
+    delta = scrape_result.get("delta")
+    age = scrape_result.get("data_age_hours")
+
+    if probed and not changed:
+        message = (
+            f"OpenStreetMap returned the same {elements} cameras — "
+            f"using cached analysis."
+        )
+    elif probed and changed:
+        if delta is not None:
+            sign = "+" if delta > 0 else ""
+            message = (
+                f"OpenStreetMap returned {elements} cameras "
+                f"({sign}{delta} vs previous {previous}); refreshing analysis."
+            )
+        else:
+            message = f"Fetched {elements} cameras from OpenStreetMap (first scan)."
+    elif cache_hit:
+        age_txt = f"{age:.1f}h old" if age is not None else "cached"
+        message = f"Loaded {elements} cameras from cache ({age_txt})."
+    else:
+        message = f"Fetched {elements} cameras from OpenStreetMap."
+
+    await ws_manager.broadcast_progress(
+        task_id,
+        {
+            "type": "cache_status",
+            "stage": "scraping",
+            "cache_hit": cache_hit,
+            "probed": probed,
+            "changed": changed,
+            "elements_count": elements,
+            "previous_elements_count": previous,
+            "delta": delta,
+            "cached_at": scrape_result.get("cached_at"),
+            "data_age_hours": age,
+            "cache_ttl_hours": scrape_result.get("cache_ttl_hours"),
+            "cache_expires_at": scrape_result.get("cache_expires_at"),
+            "message": message,
+            "timestamp": datetime.now().isoformat(),
+        },
+    )
+
+
+async def _broadcast_analysis_skipped(task_id: str, analyze_result) -> None:
+    """
+    Emit `analysis_skipped` when the orchestrator reused prior enriched
+    outputs because the scrape probe reported no change. Lets the UI swap
+    the "Analyzing…" spinner for a "Reusing prior analysis" state.
+    """
+    if not isinstance(analyze_result, dict):
+        return
+    if analyze_result.get("skipped_reason") != "scrape_unchanged":
+        return
+
+    await ws_manager.broadcast_progress(
+        task_id,
+        {
+            "type": "analysis_skipped",
+            "stage": "analyzing",
+            "reason": "scrape_unchanged",
+            "element_count": analyze_result.get("element_count", 0),
+            "geojson_path": analyze_result.get("geojson_path"),
+            "message": (
+                "No new cameras since the last scan; reusing prior analysis outputs."
+            ),
+            "timestamp": datetime.now().isoformat(),
+        },
+    )
+
+
 async def _check_and_broadcast_cancellation(task_id: str, stage: str) -> bool:
     """
     Check if task is cancelled and broadcast cancellation message.
@@ -74,7 +166,7 @@ async def execute_pipeline_task(task_id: str, request: PipelineRequest) -> None:
             return
 
         # Build configuration from request
-        config_kwargs = {}
+        config_kwargs = {"force_refresh": request.force_refresh}
 
         # Add routing config if provided
         if request.routing_config:
@@ -133,6 +225,14 @@ async def execute_pipeline_task(task_id: str, request: PipelineRequest) -> None:
         # Execute the pipeline in a thread pool to avoid blocking the event loop
         # This allows cancellation checks to respond immediately
         results = await asyncio.to_thread(pipeline.run, request.city, **run_kwargs)
+
+        # Surface scrape cache state and analyzer skip-on-unchanged to the
+        # frontend so it can render a "showing cached data" badge, a delta
+        # readout (+6 cameras since last scan), and a refresh affordance.
+        # Both events are no-ops when the corresponding stage didn't run or
+        # didn't produce metadata.
+        await _broadcast_cache_status(task_id, results.get("scrape"))
+        await _broadcast_analysis_skipped(task_id, results.get("analyze"))
 
         # Check the actual pipeline status and handle accordingly
         status = results.get("status")

@@ -35,9 +35,11 @@ class SurveillanceMetadata(BaseModel):
         # Ensure it’s a valid partial or full ISO date
         import re
 
-        if re.match(r"^\d{4}(-\d{2}-\d{2})?$", value):
+        if re.match(r"^\d{4}(-\d{2}(-\d{2})?)?$", value):
             return value
-        raise ValueError("start_date must be in format YYYY or YYYY-MM-DD or YYYY?")
+        raise ValueError(
+            "start_date must be in format YYYY, YYYY-MM, YYYY-MM-DD or YYYY?"
+        )
 
     @classmethod
     def from_raw(cls, element: dict, enriched_fields: dict) -> "SurveillanceMetadata":

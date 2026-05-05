@@ -20,6 +20,11 @@ pytest tests/agents/test_scraper_agent.py
 echo "Done..."
 echo "==============================================="
 
+echo "Running surveillance data collector tests"
+pytest tests/agents/test_surveillance_data_collector.py
+echo "Done..."
+echo "==============================================="
+
 echo "Running LangChain LLM wrapper tests"
 pytest tests/llm/test_langchain_llm.py
 echo "Done..."

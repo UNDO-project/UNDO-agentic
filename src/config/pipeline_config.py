@@ -27,6 +27,14 @@ class PipelineConfig(BaseModel):
     country_code: Optional[str] = Field(
         default=None, description="ISO country code for disambiguation"
     )
+    force_refresh: bool = Field(
+        default=False,
+        description=(
+            "Bypass the scrape cache and refetch from Overpass even if a "
+            "valid cache entry exists. Use to capture newly-tagged cameras "
+            "before the configured TTL expires."
+        ),
+    )
 
     # Analyzer settings
     analyze_enabled: bool = Field(default=True, description="Enable data analysis step")

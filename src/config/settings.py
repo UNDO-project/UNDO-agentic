@@ -90,6 +90,17 @@ class OverpassSettings(BaseSettings):
     base_delay: float = Field(
         default=2.0, description="The number of delay between retries in seconds"
     )
+    cache_ttl_hours: float = Field(
+        default=24.0,
+        description=(
+            "How long a scrape cache entry stays valid before the next scan "
+            "must re-fetch from Overpass. Override via OVERPASS_CACHE_TTL_HOURS."
+        ),
+    )
+
+    model_config = SettingsConfigDict(
+        env_file=".env", env_prefix="OVERPASS_", extra="allow"
+    )
 
 
 class HeatmapSettings(BaseSettings):

@@ -52,6 +52,7 @@ class SurveillancePipeline:
         langchain_settings: Optional[LangChainSettings] = None,
         cancellation_check: Optional[Callable[[], bool]] = None,
         on_scrape_complete: Optional[Callable[[Dict[str, Any]], None]] = None,
+        on_analyzer_progress: Optional[Callable[[int, int], None]] = None,
     ):
         """
         Initialize the surveillance pipeline.
@@ -65,11 +66,17 @@ class SurveillancePipeline:
             ``elements_count``, and ``will_skip_analyzer`` so callers (the
             FastAPI route) can surface the count to the polled task
             response and any future WebSocket consumer.
+        :param on_analyzer_progress: Optional callback fired once per
+            analyzer batch with ``(enriched_count, total)``. Wired through
+            to ``AnalysisChain.on_progress`` in ``_run_analyzer``. Lets
+            the API route surface live "Enriched N/total" progress on the
+            polled task response.
         """
         self.config = config or PipelineConfig()
         self.settings = langchain_settings or LangChainSettings()
         self.cancellation_check = cancellation_check
         self.on_scrape_complete = on_scrape_complete
+        self.on_analyzer_progress = on_analyzer_progress
 
         # Create shared memory for both agents
         db_settings = DatabaseSettings()
@@ -351,6 +358,12 @@ class SurveillancePipeline:
 
         self.status = PipelineStatus.ANALYZING
         self.current_step = "analyzing"
+
+        # Wire the per-batch progress hook through to the chain. Set on
+        # every run (rather than once at construction) so re-using a
+        # pipeline instance with a different listener works, and a
+        # ``None`` listener cleanly disables the hook for that run.
+        self.analyzer.chain.on_progress = self.on_analyzer_progress
 
         analyze_input = {
             "path": data_path,

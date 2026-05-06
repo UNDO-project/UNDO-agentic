@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Callable, Dict, Optional
 
 from langchain_core.runnables import Runnable, RunnableLambda
 
@@ -43,6 +43,13 @@ class AnalysisChain:
         self.llm = llm
         self.memory = memory
         self.agent_name = agent_name
+
+        # Optional progress hook fired once per chunk in ``_enrich_data``.
+        # Settable from the orchestrator (and from there, the API route)
+        # so the polled task response can render live "Enriched N/total"
+        # progress on the UI. Default ``None`` — chain is happy without
+        # a listener.
+        self.on_progress: Optional[Callable[[int, int], None]] = None
 
         # Build the core pipeline
         self.pipeline = self._build_pipeline()
@@ -175,6 +182,16 @@ class AnalysisChain:
             for element, analysis in zip(chunk, analyses):
                 enriched.append({**element, "analysis": analysis})
             logger.info(f"Enriched {len(enriched)}/{total} elements")
+
+            # Fire the progress hook so the API route can surface live
+            # counts on the polled task response. Listener exceptions are
+            # swallowed so a misbehaving consumer never crashes a
+            # multi-minute analyzer run.
+            if self.on_progress is not None:
+                try:
+                    self.on_progress(len(enriched), total)
+                except Exception as e:
+                    logger.warning(f"on_progress listener raised: {e}")
 
         context["enriched"] = enriched
         logger.info(f"Successfully enriched {len(enriched)} elements")

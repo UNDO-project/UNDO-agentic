@@ -360,6 +360,21 @@ async def execute_pipeline_task(task_id: str, request: PipelineRequest) -> None:
 
         pipeline.on_scrape_complete = _on_scrape_complete
 
+        def _on_analyzer_progress(done: int, total: int) -> None:
+            """
+            Per-chunk analyzer progress. Fires from the worker
+            thread; ``task_manager`` mutations are sync dict ops and
+            therefore thread-safe in this in-memory implementation.
+            """
+            task_manager.update_progress(
+                task_id, 50, f"Enriched {done}/{total} cameras…"
+            )
+            task_manager.set_metadata(
+                task_id, enriched_count=done, enriched_total=total
+            )
+
+        pipeline.on_analyzer_progress = _on_analyzer_progress
+
         run_kwargs = {}
         if request.country:
             run_kwargs["country"] = request.country

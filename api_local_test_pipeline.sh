@@ -30,6 +30,11 @@ pytest tests/api/test_websocket.py
 echo "Done..."
 echo "==============================================="
 
+echo "Running heartbeat tests"
+pytest tests/api/test_heartbeat.py
+echo "Done..."
+echo "==============================================="
+
 echo "Running static file and visualization endpoints tests"
 pytest tests/api/test_task_manager.py
 echo "Done..."

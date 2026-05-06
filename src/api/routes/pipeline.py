@@ -242,6 +242,13 @@ async def execute_pipeline_task(task_id: str, request: PipelineRequest) -> None:
     :param task_id: Task identifier
     :param request: Pipeline request parameters
     """
+    # Mutable holder so the heartbeat task always reads the current stage
+    # without us having to thread it through the pipeline. Updated at each
+    # stage transition below and from the on-scrape-complete callback.
+    current_stage = {"value": "initializing"}
+    pipeline_started_at = datetime.now()
+    heartbeat_task: asyncio.Task | None = None
+
     try:
         task_manager.mark_running(task_id)
         logger.info(f"Starting pipeline task {task_id} for {request.city}")
@@ -256,6 +263,19 @@ async def execute_pipeline_task(task_id: str, request: PipelineRequest) -> None:
                 "message": f"Initializing pipeline for {request.city}",
                 "timestamp": datetime.now().isoformat(),
             },
+        )
+
+        # Spawn the heartbeat loop now that the initial progress event has
+        # gone out. Cancelled in the finally: clause below before the
+        # terminal broadcast so heartbeats can never race a completed /
+        # failed / cancelled event.
+        heartbeat_task = asyncio.create_task(
+            _emit_heartbeats(
+                task_id,
+                current_stage,
+                pipeline_started_at,
+                _heartbeat_interval_s(),
+            )
         )
 
         # Check for cancellation before starting
@@ -282,6 +302,7 @@ async def execute_pipeline_task(task_id: str, request: PipelineRequest) -> None:
             return
 
         # Broadcast scraping stage
+        current_stage["value"] = "scraping"
         task_manager.update_progress(task_id, 20, "Scraping surveillance data...")
         await ws_manager.broadcast_progress(
             task_id,
@@ -328,6 +349,10 @@ async def execute_pipeline_task(task_id: str, request: PipelineRequest) -> None:
                 metadata_fields["elements_count"] = elements_count
             task_manager.set_metadata(task_id, **metadata_fields)
 
+            # Update the heartbeat's stage label so subsequent heartbeats
+            # report "analyzing" while the analyzer is the long pole.
+            current_stage["value"] = "analyzing"
+
             asyncio.run_coroutine_threadsafe(
                 _broadcast_analysis_starting(task_id, elements_count, will_skip),
                 loop,
@@ -356,6 +381,11 @@ async def execute_pipeline_task(task_id: str, request: PipelineRequest) -> None:
         # didn't produce metadata.
         await _broadcast_cache_status(task_id, results.get("scrape"))
         await _broadcast_analysis_skipped(task_id, results.get("analyze"))
+
+        # Cancel the heartbeat loop before the terminal broadcast so no
+        # heartbeat can race the completed/failed/cancelled event.
+        await _cancel_heartbeat(heartbeat_task)
+        heartbeat_task = None
 
         # Check the actual pipeline status and handle accordingly
         status = results.get("status")
@@ -419,6 +449,32 @@ async def execute_pipeline_task(task_id: str, request: PipelineRequest) -> None:
                 "timestamp": datetime.now().isoformat(),
             },
         )
+
+    finally:
+        # Belt-and-suspenders: cancel the heartbeat on every exit path,
+        # including the early returns from cancellation checks and the
+        # exception path above. Idempotent — _cancel_heartbeat(None) is
+        # a no-op.
+        await _cancel_heartbeat(heartbeat_task)
+
+
+async def _cancel_heartbeat(task: asyncio.Task | None) -> None:
+    """
+    Cancel a heartbeat task and wait for it to settle.
+
+    Safe to call with ``None`` or a task that has already finished;
+    ``CancelledError`` from the awaited task is swallowed since
+    cancellation is the expected exit path.
+    """
+    if task is None or task.done():
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:  # pragma: no cover — defensive
+        logger.debug(f"Heartbeat task raised on shutdown: {e}")
 
 
 @router.post("/run", response_model=TaskResponse)

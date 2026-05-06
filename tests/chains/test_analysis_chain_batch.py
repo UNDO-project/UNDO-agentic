@@ -51,6 +51,7 @@ def _make_chain(llm: _StubLLM) -> AnalysisChain:
     chain.llm = llm
     chain.memory = None  # not used by _enrich_data on the non-cache path
     chain.agent_name = "TestAgent"
+    chain.on_progress = None  # default in __init__; tests override per-test
     return chain
 
 

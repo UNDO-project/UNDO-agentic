@@ -134,6 +134,64 @@ class SurveillanceLLM:
             )
             raise
 
+    def analyze_surveillance_elements_batch(self, elements: list) -> list:
+        """
+        Analyze a list of surveillance elements in a single Ollama batch call.
+
+        Issues one ``self.chain.batch(...)`` invocation. Returns a list of
+        dicts aligned with the input order:
+
+        - On success at index ``i``: the ``model_dump(exclude_none=True)`` of
+          ``SurveillanceMetadata.from_raw(element_i, llm_result_i)``.
+        - On a per-result failure (validation error, parse error, transport
+          error for that specific request): ``{"error": str(exc)}`` at that
+          index. Other indices in the batch are unaffected.
+
+        A failure of the batch call as a whole (network down, model not
+        loaded, etc.) propagates to the caller, which is expected to wrap
+        the call in a try/except per chunk.
+
+        :param elements: List of OSM element dicts. Empty list returns ``[]``.
+        :return: List of analysis dicts aligned with ``elements``.
+        """
+        if not elements:
+            return []
+
+        self._ensure_chain_initialized()
+        format_instructions = self.output_parser.get_format_instructions()
+
+        inputs = [
+            {
+                "tags": json.dumps(el.get("tags", {}), ensure_ascii=False, indent=2),
+                "format_instructions": format_instructions,
+            }
+            for el in elements
+        ]
+
+        logger.debug(f"Analyzing {len(elements)} surveillance elements in one batch")
+        # ``return_exceptions=True`` keeps the batch atomic from the chain's
+        # perspective: a malformed LLM response on one prompt becomes an
+        # Exception at that index, leaving the others as parsed objects.
+        results = self.chain.batch(inputs, return_exceptions=True)
+
+        out: list = []
+        for element, result in zip(elements, results):
+            eid = element.get("id", "unknown")
+            if isinstance(result, Exception):
+                logger.warning(f"Batch result error for element {eid}: {result}")
+                out.append({"error": str(result)})
+                continue
+            try:
+                metadata = SurveillanceMetadata.from_raw(element, result.model_dump())
+                out.append(metadata.model_dump(exclude_none=True))
+            except ValidationError as e:
+                logger.warning(f"Validation error for element {eid}: {e}")
+                out.append({"error": str(e)})
+            except Exception as e:
+                logger.warning(f"from_raw failed for element {eid}: {e}")
+                out.append({"error": str(e)})
+        return out
+
     def generate_response(self, prompt: str, **kwargs: Any) -> str:
         """
         Generate a response from the LLM (backward compatibility method).

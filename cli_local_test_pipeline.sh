@@ -30,6 +30,16 @@ pytest tests/llm/test_langchain_llm.py
 echo "Done..."
 echo "==============================================="
 
+echo "Running SurveillanceLLM batch tests"
+pytest tests/llm/test_surveillance_llm_batch.py
+echo "Done..."
+echo "==============================================="
+
+echo "Running analysis chain batch enrichment tests"
+pytest tests/chains/test_analysis_chain_batch.py
+echo "Done..."
+echo "==============================================="
+
 echo "Running io tools tests"
 pytest tests/tools/test_io_tools.py
 echo "Done..."

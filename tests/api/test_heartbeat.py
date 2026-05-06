@@ -1,5 +1,5 @@
 """
-Tests for the pipeline-task heartbeat loop (Backend Issue #4).
+Tests for the pipeline-task heartbeat loop.
 
 The heartbeat is an asyncio task spawned right after the initial
 ``progress: 0`` broadcast and cancelled in the route's ``finally:``
@@ -74,8 +74,16 @@ def _make_request(city: str = "TestCity"):
 
 @pytest.fixture
 def fast_heartbeat(monkeypatch):
-    """Drive the heartbeat at ~0.1s so tests stay fast."""
-    monkeypatch.setenv("API_HEARTBEAT_INTERVAL_S", "0.1")
+    """
+    Drive the heartbeat at ~0.1s so tests stay fast.
+
+    We patch the interval function directly rather than setting the
+    env var: production clamps below 1.0s back up to 1.0s on purpose
+    (no accidental flooding), but tests need sub-second cadence to stay
+    quick. The clamp itself is verified separately in
+    ``test_heartbeat_interval_clamped_to_min_1s``.
+    """
+    monkeypatch.setattr(pipeline_module, "_heartbeat_interval_s", lambda: 0.1)
 
 
 @pytest.fixture

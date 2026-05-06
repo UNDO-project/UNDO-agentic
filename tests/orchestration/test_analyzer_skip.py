@@ -86,3 +86,42 @@ def test_skip_includes_optional_visualizations_if_present(tmp_path):
     assert skip["heatmap_path"].endswith("lund_heatmap.html")
     assert skip["pie_chart_path"].endswith("stats_chart_lund.png")
     assert "hotspots_path" not in skip  # not on disk → not surfaced
+
+
+# -- will_skip_analyzer (predicate used by the on-scrape-complete hook) --
+
+
+def test_will_skip_true_when_unchanged_and_geojson_exists(tmp_path):
+    data_path = _write_dummy_data(tmp_path)
+    data_path.with_name("lund_enriched.geojson").write_text("{}", encoding="utf-8")
+    scrape_result = {"changed": False, "elements_count": 152}
+
+    assert (
+        SurveillancePipeline.will_skip_analyzer(str(data_path), scrape_result) is True
+    )
+
+
+def test_will_skip_false_when_changed(tmp_path):
+    data_path = _write_dummy_data(tmp_path)
+    data_path.with_name("lund_enriched.geojson").write_text("{}", encoding="utf-8")
+    scrape_result = {"changed": True, "elements_count": 158}
+
+    assert (
+        SurveillancePipeline.will_skip_analyzer(str(data_path), scrape_result) is False
+    )
+
+
+def test_will_skip_false_when_geojson_missing(tmp_path):
+    data_path = _write_dummy_data(tmp_path)
+    scrape_result = {"changed": False, "elements_count": 152}
+
+    assert (
+        SurveillancePipeline.will_skip_analyzer(str(data_path), scrape_result) is False
+    )
+
+
+def test_will_skip_false_without_scrape_result(tmp_path):
+    data_path = _write_dummy_data(tmp_path)
+
+    assert SurveillancePipeline.will_skip_analyzer(str(data_path), None) is False
+    assert SurveillancePipeline.will_skip_analyzer(str(data_path), {}) is False

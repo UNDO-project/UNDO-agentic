@@ -201,3 +201,98 @@ def test_batch_size_respected_across_sizes(size: int):
     expected_chunks = (16 + size - 1) // size
     assert len(llm.batches) == expected_chunks
     assert sum(len(b) for b in llm.batches) == 16
+
+
+# -- on_progress hook (Issue #6) --
+
+
+def test_on_progress_fires_once_per_chunk_with_running_total():
+    """
+    10 elements at batch_size=4 → progress hook fires (4, 10), (8, 10),
+    (10, 10) in order.
+    """
+    llm = _StubLLM(batch_size=4)
+    chain = _make_chain(llm)
+    calls: list[tuple[int, int]] = []
+    chain.on_progress = lambda done, total: calls.append((done, total))
+
+    chain._enrich_data(_ctx(10))
+
+    assert calls == [(4, 10), (8, 10), (10, 10)]
+
+
+def test_on_progress_counts_failed_chunks_too():
+    """
+    A chunk whose batch call raises still gets its elements appended
+    (with ``{"error": ...}`` annotations) and still triggers the progress
+    hook — count semantics match ``len(enriched)``.
+    """
+    llm = _StubLLM(batch_size=4, raise_on_chunk=1)  # chunk index 1 raises
+    chain = _make_chain(llm)
+    calls: list[tuple[int, int]] = []
+    chain.on_progress = lambda done, total: calls.append((done, total))
+
+    chain._enrich_data(_ctx(10))
+
+    # All three chunks reported, including the one that raised.
+    assert calls == [(4, 10), (8, 10), (10, 10)]
+
+
+def test_on_progress_listener_exception_swallowed():
+    """A bad listener must not interrupt the run; subsequent chunks continue."""
+    llm = _StubLLM(batch_size=4)
+    chain = _make_chain(llm)
+    calls: list[tuple[int, int]] = []
+
+    def _listener(done: int, total: int) -> None:
+        calls.append((done, total))
+        if done == 4:
+            raise RuntimeError("listener boom on first chunk")
+
+    chain.on_progress = _listener
+
+    out = chain._enrich_data(_ctx(10))
+
+    # Listener was called for every chunk despite raising on the first.
+    assert calls == [(4, 10), (8, 10), (10, 10)]
+    assert len(out["enriched"]) == 10
+
+
+def test_no_on_progress_listener_is_noop():
+    """``on_progress = None`` (default) is a clean no-op; run still completes."""
+    llm = _StubLLM(batch_size=4)
+    chain = _make_chain(llm)
+    chain.on_progress = None  # explicit for the test
+
+    out = chain._enrich_data(_ctx(10))
+
+    assert len(out["enriched"]) == 10
+    assert len(llm.batches) == 3  # 4 + 4 + 2
+
+
+def test_on_progress_does_not_fire_on_cache_hit_path(tmp_path):
+    """The cache-hit short-circuit returns before the chunk loop, so the hook never fires."""
+    import json
+
+    enriched_path = tmp_path / "lund_enriched.json"
+    cached = {"elements": [{"id": 1, "analysis": {}}]}
+    enriched_path.write_text(json.dumps(cached), encoding="utf-8")
+
+    llm = _StubLLM(batch_size=4)
+    chain = _make_chain(llm)
+    calls: list = []
+    chain.on_progress = lambda done, total: calls.append((done, total))
+
+    chain._enrich_data(
+        {
+            "elements": [],
+            "raw_hash": "abc",
+            "path": str(tmp_path / "lund.json"),
+            "enriched_path": str(enriched_path),
+            "cache_hit": True,
+            "enriched_exists": True,
+        }
+    )
+
+    assert calls == []
+    assert llm.batches == []

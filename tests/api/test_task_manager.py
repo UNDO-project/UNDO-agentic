@@ -112,6 +112,36 @@ def test_update_task_progress(task_manager):
     assert task.metadata["last_message"] == "Processing data..."
 
 
+def test_set_metadata_merges_typed_fields(task_manager):
+    """``set_metadata`` should merge fields without dropping existing keys."""
+    task_id = task_manager.create_task("pipeline", metadata={"city": "Lund"})
+    task_manager.update_progress(task_id, 50, "Analyzing 152 cameras…")
+
+    task_manager.set_metadata(task_id, elements_count=152, analysis_skipped=False)
+
+    task = task_manager.get_task(task_id)
+    assert task.metadata["city"] == "Lund"  # preserved
+    assert task.metadata["last_message"] == "Analyzing 152 cameras…"  # preserved
+    assert task.metadata["elements_count"] == 152
+    assert task.metadata["analysis_skipped"] is False
+
+
+def test_set_metadata_overwrites_existing_keys(task_manager):
+    """Subsequent ``set_metadata`` calls overwrite the same keys."""
+    task_id = task_manager.create_task("pipeline")
+    task_manager.set_metadata(task_id, elements_count=10, analysis_skipped=True)
+    task_manager.set_metadata(task_id, elements_count=99)
+
+    task = task_manager.get_task(task_id)
+    assert task.metadata["elements_count"] == 99
+    assert task.metadata["analysis_skipped"] is True  # untouched
+
+
+def test_set_metadata_on_nonexistent_task_is_noop(task_manager):
+    """Setting metadata on a missing task should not raise."""
+    task_manager.set_metadata("nonexistent-id", elements_count=42)  # no exception
+
+
 def test_delete_task(task_manager):
     """Test deleting a task."""
     task_id = task_manager.create_task("pipeline")

@@ -133,7 +133,14 @@ class AnalysisChain:
 
     def _enrich_data(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Enrich surveillance elements using LLM.
+        Enrich surveillance elements using the LLM in chunks of
+        ``LangChainSettings.batch_size``.
+
+        Each chunk is one ``chain.batch(...)`` call against Ollama. If a
+        chunk's batch call raises (transport error, model not loaded),
+        every element in that chunk is annotated with ``{"error": ...}``
+        and the loop continues with the next chunk — no per-element
+        fallback path.
 
         :param context: Current pipeline context
         :return: Updated context with enriched elements
@@ -148,35 +155,26 @@ class AnalysisChain:
             logger.debug(f"Loaded {len(context['enriched'])} cached enriched elements")
             return context
 
-        # Enrich each element
-        logger.info(f"Enriching {len(context['elements'])} elements...")
+        elements = context["elements"]
+        total = len(elements)
+        batch_size = self.llm.settings.batch_size
+        logger.info(f"Enriching {total} elements (batch_size={batch_size})...")
         enriched = []
 
-        for i, element in enumerate(context["elements"]):
+        for chunk_start in range(0, total, batch_size):
+            chunk = elements[chunk_start : chunk_start + batch_size]
             try:
-                # Use LLM's analyze method if available, otherwise use surveillance analysis
-                if hasattr(self.llm, "analyze_surveillance_element"):
-                    metadata = self.llm.analyze_surveillance_element(element)
-                    analysis = metadata.model_dump(exclude_none=True)
-                else:
-                    # Fallback to simple generation
-                    analysis = self._enrich_element_fallback(element)
-
-                enriched_element = {**element, "analysis": analysis}
-                enriched.append(enriched_element)
-
-                if (i + 1) % 10 == 0:
-                    logger.debug(
-                        f"Enriched {i + 1}/{len(context['elements'])} elements"
-                    )
-
+                analyses = self.llm.analyze_surveillance_elements_batch(chunk)
             except Exception as e:
                 logger.warning(
-                    f"Failed to enrich element {element.get('id', 'unknown')}: {e}"
+                    f"Batch enrichment failed for chunk starting at index "
+                    f"{chunk_start} ({len(chunk)} elements): {e}"
                 )
-                # Add element with error annotation
-                enriched_element = {**element, "analysis": {"error": str(e)}}
-                enriched.append(enriched_element)
+                analyses = [{"error": str(e)}] * len(chunk)
+
+            for element, analysis in zip(chunk, analyses):
+                enriched.append({**element, "analysis": analysis})
+            logger.info(f"Enriched {len(enriched)}/{total} elements")
 
         context["enriched"] = enriched
         logger.info(f"Successfully enriched {len(enriched)} elements")

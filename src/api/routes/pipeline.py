@@ -84,6 +84,47 @@ async def _broadcast_cache_status(task_id: str, scrape_result) -> None:
     )
 
 
+async def _broadcast_analysis_starting(
+    task_id: str,
+    elements_count: int | None,
+    will_skip: bool,
+) -> None:
+    """
+    Emit ``analysis_starting`` once the scrape stage returns and we know
+    the element count + planned analyzer-skip decision.
+
+    Advisory only — the polling-based UI consumes the same data via
+    ``task.metadata`` (`elements_count`, `analysis_skipped`). Kept as a
+    WebSocket event so any future WS consumer can read the count without
+    parsing strings.
+    """
+    if will_skip:
+        message = (
+            f"Reusing prior analysis of {elements_count} cameras."
+            if elements_count is not None
+            else "Reusing prior analysis."
+        )
+    else:
+        message = (
+            f"Analyzing {elements_count} cameras…"
+            if elements_count is not None
+            else "Analyzing surveillance infrastructure"
+        )
+
+    await ws_manager.broadcast_progress(
+        task_id,
+        {
+            "type": "analysis_starting",
+            "stage": "analyzing",
+            "progress": 50,
+            "elements_count": elements_count,
+            "skipped": will_skip,
+            "message": message,
+            "timestamp": datetime.now().isoformat(),
+        },
+    )
+
+
 async def _broadcast_analysis_skipped(task_id: str, analyze_result) -> None:
     """
     Emit `analysis_skipped` when the orchestrator reused prior enriched
@@ -201,6 +242,43 @@ async def execute_pipeline_task(task_id: str, request: PipelineRequest) -> None:
         pipeline = create_pipeline(request.scenario, **config_kwargs)
         pipeline.cancellation_check = lambda: task_manager.is_cancelled(task_id)
 
+        # Wire the on-scrape-complete hook. The pipeline runs on a worker
+        # thread (via asyncio.to_thread) so we capture the running loop
+        # here and use run_coroutine_threadsafe to schedule the WS
+        # broadcast back on it. ``task_manager`` mutations are sync dict
+        # ops and safe to call from any thread.
+        loop = asyncio.get_running_loop()
+
+        def _on_scrape_complete(payload: dict) -> None:
+            elements_count = payload.get("elements_count")
+            will_skip = bool(payload.get("will_skip_analyzer"))
+
+            if will_skip:
+                msg = (
+                    f"Reusing prior analysis of {elements_count} cameras."
+                    if elements_count is not None
+                    else "Reusing prior analysis."
+                )
+            else:
+                msg = (
+                    f"Analyzing {elements_count} cameras…"
+                    if elements_count is not None
+                    else "Analyzing data..."
+                )
+
+            task_manager.update_progress(task_id, 50, msg)
+            metadata_fields: dict = {"analysis_skipped": will_skip}
+            if elements_count is not None:
+                metadata_fields["elements_count"] = elements_count
+            task_manager.set_metadata(task_id, **metadata_fields)
+
+            asyncio.run_coroutine_threadsafe(
+                _broadcast_analysis_starting(task_id, elements_count, will_skip),
+                loop,
+            )
+
+        pipeline.on_scrape_complete = _on_scrape_complete
+
         run_kwargs = {}
         if request.country:
             run_kwargs["country"] = request.country
@@ -209,21 +287,10 @@ async def execute_pipeline_task(task_id: str, request: PipelineRequest) -> None:
         if await _check_and_broadcast_cancellation(task_id, "analysis"):
             return
 
-        # Broadcast analysis stage
-        task_manager.update_progress(task_id, 50, "Analyzing data...")
-        await ws_manager.broadcast_progress(
-            task_id,
-            {
-                "type": "progress",
-                "stage": "analyzing",
-                "progress": 50,
-                "message": "Analyzing surveillance infrastructure",
-                "timestamp": datetime.now().isoformat(),
-            },
-        )
-
         # Execute the pipeline in a thread pool to avoid blocking the event loop
-        # This allows cancellation checks to respond immediately
+        # This allows cancellation checks to respond immediately. The
+        # analyzer-stage progress broadcast happens from the
+        # on_scrape_complete callback once we know the element count.
         results = await asyncio.to_thread(pipeline.run, request.city, **run_kwargs)
 
         # Surface scrape cache state and analyzer skip-on-unchanged to the

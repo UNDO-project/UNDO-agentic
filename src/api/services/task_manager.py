@@ -113,6 +113,21 @@ class TaskManager:
             if message:
                 task.metadata["last_message"] = message
 
+    def set_metadata(self, task_id: str, **fields: Any) -> None:
+        """
+        Merge typed metadata fields into ``task.metadata``.
+
+        Used to surface structured signals on the polled task response
+        (e.g. ``elements_count``, ``analysis_skipped``) without abusing
+        ``last_message`` as a string transport. Existing keys are
+        overwritten; other keys are left intact.
+
+        :param task_id: Task identifier
+        :param fields: Arbitrary keyword arguments merged into metadata
+        """
+        if task := self.tasks.get(task_id):
+            task.metadata.update(fields)
+
     def mark_running(self, task_id: str) -> None:
         """
         Mark task as running.

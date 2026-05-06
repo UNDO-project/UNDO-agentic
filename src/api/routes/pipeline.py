@@ -6,6 +6,7 @@ including scraping, analysis, and optional routing.
 """
 
 import asyncio
+import os
 from datetime import datetime
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 
@@ -17,6 +18,61 @@ from src.orchestration.langchain_pipeline import create_pipeline
 from src.config.logger import logger
 
 router = APIRouter(prefix="/pipeline")
+
+
+def _heartbeat_interval_s() -> float:
+    """
+    Resolve the heartbeat cadence from ``API_HEARTBEAT_INTERVAL_S`` (env)
+    with a 5.0s default and a 1.0s lower clamp.
+
+    Read on each task start so tests can monkey-patch the env var.
+    A bad value falls back to the default rather than failing the run.
+    """
+    raw = os.environ.get("API_HEARTBEAT_INTERVAL_S", "5.0")
+    try:
+        return max(1.0, float(raw))
+    except (TypeError, ValueError):
+        return 5.0
+
+
+async def _emit_heartbeats(
+    task_id: str,
+    stage_holder: dict,
+    start_time: datetime,
+    interval_s: float,
+) -> None:
+    """
+    Broadcast a ``heartbeat`` WebSocket event every ``interval_s`` seconds
+    until the task is cancelled.
+
+    Heartbeats are advisory: they carry the current ``stage`` label
+    (read from ``stage_holder["value"]``) and the wall-clock ``elapsed_s``
+    since the task started, but **no** ``progress`` field — frontends
+    must not animate progress bars off heartbeats.
+
+    Cancellation is the normal exit path; ``CancelledError`` is swallowed
+    so it never surfaces in error logs.
+    """
+    try:
+        while True:
+            await asyncio.sleep(interval_s)
+            elapsed = (datetime.now() - start_time).total_seconds()
+            await ws_manager.broadcast_progress(
+                task_id,
+                {
+                    "type": "heartbeat",
+                    "stage": stage_holder["value"],
+                    "elapsed_s": round(elapsed, 1),
+                    "timestamp": datetime.now().isoformat(),
+                },
+            )
+    except asyncio.CancelledError:
+        # Clean shutdown — finally: in execute_pipeline_task cancels us
+        # right before the terminal broadcast, so this is the expected
+        # exit path. Don't re-raise.
+        return
+    except Exception as e:  # pragma: no cover — defensive
+        logger.debug(f"Heartbeat loop for task {task_id} crashed: {e}")
 
 
 async def _broadcast_cache_status(task_id: str, scrape_result) -> None:

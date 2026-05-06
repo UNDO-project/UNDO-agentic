@@ -73,6 +73,14 @@ Examples:
     parser.add_argument(
         "--verbose", action="store_true", help="Enable verbose logging", default=True
     )
+    parser.add_argument(
+        "--force-refresh",
+        action="store_true",
+        help=(
+            "Bypass the scrape cache and refetch from Overpass. "
+            "Use to capture cameras newly tagged in OSM before the TTL expires."
+        ),
+    )
 
     # Routing arguments
     parser.add_argument(
@@ -261,6 +269,8 @@ def main():
         config_kwargs["scrape_enabled"] = False
     if args.skip_analyze:
         config_kwargs["analyze_enabled"] = False
+    if args.force_refresh:
+        config_kwargs["force_refresh"] = True
 
     # Routing configuration
     if args.enable_routing:

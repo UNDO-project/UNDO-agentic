@@ -13,10 +13,15 @@ def best_area_candidate(results: list[Dict[str, Any]]) -> tuple[int, str]:
     Priority:
       1. A relation with `admin_level` 8 or 9.
       2. Any relation.
-      3. Fallback to the first way or node.
+      3. Any way (closed ways are area-able in Overpass).
+
+    Nodes are never returned: Overpass does not derive areas from nodes, so a
+    node candidate would yield a syntactically valid query against a
+    non-existent area, returning zero elements with no error.
 
     :param results: A list of Nominatim result dictionaries.
-    :returns: A tuple containing the OSM ID and type ('relation', 'way', or 'node').
+    :returns: A tuple containing the OSM ID and type ('relation' or 'way').
+    :raises RuntimeError: If no relation or way candidate is available.
     """
     for item in results:
         if item["osm_type"] == "relation" and item.get("extratags", {}).get(
@@ -28,8 +33,15 @@ def best_area_candidate(results: list[Dict[str, Any]]) -> tuple[int, str]:
         if item["osm_type"] == "relation":
             return int(item["osm_id"]), "relation"
 
-    first = results[0]
-    return int(first["osm_id"]), first["osm_type"]
+    for item in results:
+        if item["osm_type"] == "way":
+            return int(item["osm_id"]), "way"
+
+    raise RuntimeError(
+        "No usable boundary candidate (relation/way) in Nominatim results; "
+        f"got {len(results)} result(s) of types "
+        f"{sorted({r.get('osm_type') for r in results})}."
+    )
 
 
 def nominatim_city(
@@ -75,14 +87,19 @@ def area_id(osm_id: int, osm_type: str) -> int:
     Convert an OSM object ID into an Overpass area ID.
 
     :param osm_id: The OSM ID of the object.
-    :param osm_type: The type of the OSM object ('node', 'way', or 'relation').
+    :param osm_type: The type of the OSM object ('way' or 'relation').
     :returns: The corresponding Overpass area ID.
+    :raises ValueError: If `osm_type` is not 'way' or 'relation'.
     """
     base = {
-        "node": 1_600_000_000,
         "way": 2_400_000_000,
         "relation": 3_600_000_000,
-    }[osm_type]
+    }.get(osm_type)
+    if base is None:
+        raise ValueError(
+            f"Cannot derive Overpass area from osm_type={osm_type!r}; "
+            "only 'relation' and 'way' are supported."
+        )
     return base + osm_id
 
 

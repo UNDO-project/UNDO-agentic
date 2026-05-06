@@ -20,8 +20,23 @@ pytest tests/agents/test_scraper_agent.py
 echo "Done..."
 echo "==============================================="
 
+echo "Running surveillance data collector tests"
+pytest tests/agents/test_surveillance_data_collector.py
+echo "Done..."
+echo "==============================================="
+
 echo "Running LangChain LLM wrapper tests"
 pytest tests/llm/test_langchain_llm.py
+echo "Done..."
+echo "==============================================="
+
+echo "Running SurveillanceLLM batch tests"
+pytest tests/llm/test_surveillance_llm_batch.py
+echo "Done..."
+echo "==============================================="
+
+echo "Running analysis chain batch enrichment tests"
+pytest tests/chains/test_analysis_chain_batch.py
 echo "Done..."
 echo "==============================================="
 
@@ -67,5 +82,15 @@ echo "==============================================="
 
 echo "Running Routing tools tests"
 pytest tests/tools/test_routing_tools.py
+echo "Done..."
+echo "==============================================="
+
+echo "Running orchestrator analyzer-skip tests"
+pytest tests/orchestration/test_analyzer_skip.py
+echo "Done..."
+echo "==============================================="
+
+echo "Running orchestrator on-scrape-complete hook tests"
+pytest tests/orchestration/test_on_scrape_complete.py
 echo "Done..."
 echo "==============================================="

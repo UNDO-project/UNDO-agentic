@@ -90,6 +90,17 @@ class OverpassSettings(BaseSettings):
     base_delay: float = Field(
         default=2.0, description="The number of delay between retries in seconds"
     )
+    cache_ttl_hours: float = Field(
+        default=24.0,
+        description=(
+            "How long a scrape cache entry stays valid before the next scan "
+            "must re-fetch from Overpass. Override via OVERPASS_CACHE_TTL_HOURS."
+        ),
+    )
+
+    model_config = SettingsConfigDict(
+        env_file=".env", env_prefix="OVERPASS_", extra="allow"
+    )
 
 
 class HeatmapSettings(BaseSettings):
@@ -202,6 +213,17 @@ class LangChainSettings(BaseSettings):
     tool_timeout: float = Field(
         default=60.0, description="Timeout for individual tool executions in seconds"
     )
+
+    # Analyzer batching
+    batch_size: int = Field(
+        default=8,
+        description=(
+            "Number of surveillance elements per LLM batch call. Override "
+            "via LANGCHAIN_BATCH_SIZE. Larger values trade memory pressure "
+            "on the Ollama side for fewer round-trips."
+        ),
+    )
+
     model_config = SettingsConfigDict(
         env_file=".env", env_prefix="LANGCHAIN_", extra="allow"
     )
@@ -218,4 +240,11 @@ class LangChainSettings(BaseSettings):
     def validate_max_iterations(cls, value: int) -> int:
         if value <= 0:
             raise ValueError("Maximum iterations must be positive")
+        return value
+
+    @field_validator("batch_size")
+    @classmethod
+    def validate_batch_size(cls, value: int) -> int:
+        if not 1 <= value <= 64:
+            raise ValueError("batch_size must be between 1 and 64")
         return value

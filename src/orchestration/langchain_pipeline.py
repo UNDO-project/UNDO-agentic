@@ -51,6 +51,7 @@ class SurveillancePipeline:
         config: Optional[PipelineConfig] = None,
         langchain_settings: Optional[LangChainSettings] = None,
         cancellation_check: Optional[Callable[[], bool]] = None,
+        on_scrape_complete: Optional[Callable[[Dict[str, Any]], None]] = None,
     ):
         """
         Initialize the surveillance pipeline.
@@ -58,10 +59,17 @@ class SurveillancePipeline:
         :param config: Pipeline configuration (uses default if None)
         :param langchain_settings: LangChain settings for agents
         :param cancellation_check: Optional callback that returns True if pipeline should cancel
+        :param on_scrape_complete: Optional callback fired once after the
+            scrape stage returns and before the analyzer stage starts.
+            Receives a payload dict with ``scrape_result``, ``data_path``,
+            ``elements_count``, and ``will_skip_analyzer`` so callers (the
+            FastAPI route) can surface the count to the polled task
+            response and any future WebSocket consumer.
         """
         self.config = config or PipelineConfig()
         self.settings = langchain_settings or LangChainSettings()
         self.cancellation_check = cancellation_check
+        self.on_scrape_complete = on_scrape_complete
 
         # Create shared memory for both agents
         db_settings = DatabaseSettings()
@@ -171,6 +179,12 @@ class SurveillancePipeline:
                 if self._check_cancellation():
                     logger.info(f"Pipeline cancelled before analysis for {city}")
                     return self._finalize_results(results, PipelineStatus.CANCELLED)
+
+                # Fire the on-scrape-complete hook now that we know the
+                # element count and whether the analyzer will be skipped.
+                # Errors in the callback are swallowed so a bad listener
+                # never crashes the pipeline.
+                self._notify_scrape_complete(data_path, results.get("scrape"))
 
                 analyze_result = self._run_analyzer(
                     data_path, scrape_result=results.get("scrape")
@@ -333,16 +347,10 @@ class SurveillancePipeline:
         if skip is not None:
             self.status = PipelineStatus.ANALYZING
             self.current_step = "analyzing"
-            logger.info(
-                f"Analyzer skipped: scrape unchanged "
-                f"({skip['element_count']} cameras); reusing {skip['enriched_path']}"
-            )
             return skip
 
         self.status = PipelineStatus.ANALYZING
         self.current_step = "analyzing"
-
-        logger.info(f"Analyzing data from {data_path}")
 
         analyze_input = {
             "path": data_path,
@@ -370,6 +378,28 @@ class SurveillancePipeline:
             }
 
     @staticmethod
+    def will_skip_analyzer(
+        data_path: str,
+        scrape_result: Optional[Dict[str, Any]],
+    ) -> bool:
+        """
+        Predicate: would ``_maybe_skip_analyzer`` short-circuit for this
+        ``(data_path, scrape_result)`` pair?
+
+        Used by the on-scrape-complete hook to surface the planned
+        skip/run decision to the API layer without computing the full
+        synthetic result dict twice.
+
+        :return: True iff scrape reports unchanged AND the prior enriched
+            geojson is on disk.
+        """
+        if not scrape_result or scrape_result.get("changed") is not False:
+            return False
+        data = Path(data_path)
+        enriched_geojson = data.with_name(data.stem + "_enriched.geojson")
+        return enriched_geojson.exists()
+
+    @staticmethod
     def _maybe_skip_analyzer(
         data_path: str,
         scrape_result: Optional[Dict[str, Any]],
@@ -381,23 +411,26 @@ class SurveillancePipeline:
         Returns ``None`` if the analyzer should run normally — either because
         ``changed`` is True/missing or the prior enriched files are gone.
         """
-        if not scrape_result or scrape_result.get("changed") is not False:
+        if not SurveillancePipeline.will_skip_analyzer(data_path, scrape_result):
+            data = Path(data_path)
+            enriched_geojson = data.with_name(data.stem + "_enriched.geojson")
+            # Only log the "missing prior outputs" case — the changed=True
+            # case is the normal run-the-analyzer path and doesn't need a
+            # log line of its own.
+            if (
+                scrape_result
+                and scrape_result.get("changed") is False
+                and not enriched_geojson.exists()
+            ):
+                logger.info(
+                    f"Cannot skip analyzer: prior enriched geojson missing at "
+                    f"{enriched_geojson}; will re-run."
+                )
             return None
 
         data = Path(data_path)
         enriched_json = data.with_name(data.stem + "_enriched.json")
         enriched_geojson = data.with_name(data.stem + "_enriched.geojson")
-
-        # The geojson is the only artifact downstream stages (routing) require.
-        # If it's missing we cannot honor the skip even if the underlying OSM
-        # data is unchanged — fall through to a normal analyzer run that
-        # rebuilds it.
-        if not enriched_geojson.exists():
-            logger.info(
-                f"Cannot skip analyzer: prior enriched geojson missing at "
-                f"{enriched_geojson}; will re-run."
-            )
-            return None
 
         result: Dict[str, Any] = {
             "success": True,
@@ -507,6 +540,47 @@ class SurveillancePipeline:
         if self.cancellation_check and self.cancellation_check():
             return True
         return False
+
+    def _notify_scrape_complete(
+        self,
+        data_path: str,
+        scrape_result: Optional[Dict[str, Any]],
+    ) -> None:
+        """
+        Fire ``on_scrape_complete`` once with the element count and the
+        planned analyzer-skip decision.
+
+        Logs the same one-liner via loguru so the CLI surface gets the
+        signal too. Exceptions raised by the listener are caught and
+        logged but never propagated — a misbehaving listener must not
+        crash the pipeline mid-run.
+        """
+        elements_count = (
+            scrape_result.get("elements_count")
+            if isinstance(scrape_result, dict)
+            else None
+        )
+        will_skip = self.will_skip_analyzer(data_path, scrape_result)
+
+        if elements_count is not None:
+            if will_skip:
+                logger.info(f"Reusing prior analysis of {elements_count} cameras.")
+            else:
+                logger.info(f"Analyzing {elements_count} cameras…")
+
+        if self.on_scrape_complete is None:
+            return
+
+        payload = {
+            "scrape_result": scrape_result,
+            "data_path": data_path,
+            "elements_count": elements_count,
+            "will_skip_analyzer": will_skip,
+        }
+        try:
+            self.on_scrape_complete(payload)
+        except Exception as e:
+            logger.error(f"on_scrape_complete listener raised: {e}")
 
     def _handle_stage_result(
         self,

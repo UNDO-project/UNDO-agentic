@@ -5,13 +5,18 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class AnalysisScenario(str, Enum):
-    """Predefined analysis scenarios for different use cases."""
+    """
+    Output presets for the analyzer's visualization stage.
 
-    BASIC = "basic"  # Just enrich and generate GeoJSON
+    ``BASIC`` is the minimal-output baseline (enriched data + stats).
+    ``FULL`` flips every output toggle on. Power users override
+    individual flags via ``OutputOverrides`` on the request layer
+    (or the CLI's ``--heatmap``/``--charts``/``--hotspots`` flags)
+    rather than picking from a long list of named bundles.
+    """
+
+    BASIC = "basic"  # Enriched data + GeoJSON + stats; no charts or maps
     FULL = "full"  # All visualizations and statistics
-    QUICK = "quick"  # Use cache aggressively, minimal processing
-    REPORT = "report"  # Focus on statistics and charts
-    MAPPING = "mapping"  # Focus on geographic visualizations
 
 
 class PipelineConfig(BaseModel):
@@ -107,19 +112,17 @@ class PipelineConfig(BaseModel):
     @classmethod
     def from_scenario(cls, scenario: AnalysisScenario) -> "PipelineConfig":
         """
-        Create configuration from predefined scenario.
+        Create configuration from a predefined output preset.
+
+        Two presets are supported: ``BASIC`` (geojson + stats) and ``FULL``
+        (every output toggle on). Callers needing a custom toggle bundle
+        should start from a preset and override individual flags via
+        ``OutputOverrides`` (API) or the CLI toggle flags.
 
         :param scenario: Analysis scenario to use
         :return: Configured PipelineConfig instance
         """
-        if scenario == AnalysisScenario.BASIC:
-            return cls(
-                scenario=scenario,
-                generate_geojson=True,
-                compute_stats=True,
-            )
-
-        elif scenario == AnalysisScenario.FULL:
+        if scenario == AnalysisScenario.FULL:
             return cls(
                 scenario=scenario,
                 generate_geojson=True,
@@ -132,40 +135,12 @@ class PipelineConfig(BaseModel):
                 plot_hotspots=True,
             )
 
-        elif scenario == AnalysisScenario.QUICK:
-            return cls(
-                scenario=scenario,
-                generate_geojson=True,
-                generate_heatmap=False,
-                generate_hotspots=False,
-                compute_stats=True,
-                generate_chart=False,
-                plot_zone_sensitivity=False,
-                plot_sensitivity_reasons=False,
-                plot_hotspots=False,
-            )
-
-        elif scenario == AnalysisScenario.REPORT:
-            return cls(
-                scenario=scenario,
-                generate_geojson=True,
-                compute_stats=True,
-                generate_chart=True,
-                plot_zone_sensitivity=True,
-                plot_sensitivity_reasons=True,
-            )
-
-        elif scenario == AnalysisScenario.MAPPING:
-            return cls(
-                scenario=scenario,
-                generate_geojson=True,
-                generate_heatmap=True,
-                generate_hotspots=True,
-                plot_hotspots=True,
-            )
-
-        else:
-            return cls(scenario=scenario)
+        # BASIC baseline: enriched data + stats, no charts or maps.
+        return cls(
+            scenario=scenario,
+            generate_geojson=True,
+            compute_stats=True,
+        )
 
     def to_analyzer_options(self) -> Dict[str, Any]:
         """

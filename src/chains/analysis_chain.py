@@ -315,6 +315,7 @@ class AnalysisChain:
             plot_hotspots as plot_hotspots_chart,
             plot_operator_distribution,
             plot_manufacturer_distribution,
+            plot_install_timeline,
         )
 
         errors = []
@@ -441,6 +442,20 @@ class AnalysisChain:
                     )
                 except Exception as e:
                     error_msg = f"Manufacturer distribution chart failed: {e}"
+                    logger.error(error_msg)
+                    errors.append(error_msg)
+
+            if options.get("plot_install_timeline"):
+                try:
+                    chart_path = plot_install_timeline(
+                        context["stats"],
+                        output_dir,
+                        filename=f"install_timeline_{city_stem}.png",
+                    )
+                    context["install_timeline_chart_path"] = str(chart_path)
+                    logger.info(f"Generated install timeline chart at {chart_path}")
+                except Exception as e:
+                    error_msg = f"Install timeline chart failed: {e}"
                     logger.error(error_msg)
                     errors.append(error_msg)
 

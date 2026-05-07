@@ -294,8 +294,8 @@ class AnalysisChain:
                 "error": str(e),
             }
 
-    @staticmethod
     def generate_visualizations(
+        self,
         context: Dict[str, Any],
         options: Dict[str, bool],
     ) -> Dict[str, Any]:
@@ -403,6 +403,29 @@ class AnalysisChain:
                     logger.info(f"Generated hotspots chart at {chart_path}")
                 except Exception as e:
                     error_msg = f"Hotspots chart failed: {e}"
+                    logger.error(error_msg)
+                    errors.append(error_msg)
+
+            # LLM-generated narrative report. Depends on ``stats`` having
+            # been computed in the same call (we don't try to re-derive
+            # them on the report-only path — keep options orthogonal).
+            if options.get("generate_report"):
+                try:
+                    raw_path = Path(context["path"])
+                    report_path = raw_path.with_name(f"{raw_path.stem}_report.md")
+                    sample = [
+                        el
+                        for el in context.get("enriched", [])
+                        if isinstance(el, dict)
+                        and isinstance(el.get("analysis"), dict)
+                        and el["analysis"].get("sensitive")
+                    ]
+                    markdown = self.llm.generate_city_report(context["stats"], sample)
+                    report_path.write_text(markdown, encoding="utf-8")
+                    context["report_path"] = str(report_path)
+                    logger.info(f"Generated city report at {report_path}")
+                except Exception as e:
+                    error_msg = f"City report generation failed: {e}"
                     logger.error(error_msg)
                     errors.append(error_msg)
 

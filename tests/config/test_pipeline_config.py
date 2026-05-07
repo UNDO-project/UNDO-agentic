@@ -52,3 +52,20 @@ def test_full_flips_every_output_toggle_on():
     assert cfg.plot_zone_sensitivity is True
     assert cfg.plot_sensitivity_reasons is True
     assert cfg.plot_hotspots is True
+    assert cfg.generate_report is True
+
+
+def test_basic_does_not_enable_report():
+    """The narrative report is opt-in on BASIC; it costs an extra LLM call."""
+    cfg = PipelineConfig.from_scenario(AnalysisScenario.BASIC)
+    assert cfg.generate_report is False
+
+
+def test_to_analyzer_options_carries_generate_report():
+    """``to_analyzer_options`` propagates ``generate_report`` to the chain."""
+    cfg = PipelineConfig.from_scenario(AnalysisScenario.FULL)
+    options = cfg.to_analyzer_options()
+    assert options["generate_report"] is True
+
+    cfg2 = PipelineConfig.from_scenario(AnalysisScenario.BASIC)
+    assert cfg2.to_analyzer_options()["generate_report"] is False

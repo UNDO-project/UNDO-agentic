@@ -35,7 +35,12 @@ pytest tests/api/test_heartbeat.py
 echo "Done..."
 echo "==============================================="
 
-echo "Running static file and visualization endpoints tests"
-pytest tests/api/test_task_manager.py
+echo "Running output overrides tests"
+pytest tests/api/test_output_overrides.py
+echo "Done..."
+echo "==============================================="
+
+echo "Running output endpoints tests"
+pytest tests/api/test_outputs.py
 echo "Done..."
 echo "==============================================="

@@ -25,6 +25,11 @@ pytest tests/agents/test_surveillance_data_collector.py
 echo "Done..."
 echo "==============================================="
 
+echo "Running route finder agent tests"
+pytest tests/agents/test_route_finder_agent.py
+echo "Done..."
+echo "==============================================="
+
 echo "Running LangChain LLM wrapper tests"
 pytest tests/llm/test_langchain_llm.py
 echo "Done..."
@@ -77,6 +82,11 @@ echo "==============================================="
 
 echo "Running LangChain configuration tests"
 pytest tests/config/test_langchain_config.py
+echo "Done..."
+echo "==============================================="
+
+echo "Running pipeline configuration tests"
+pytest tests/config/test_pipeline_config.py
 echo "Done..."
 echo "==============================================="
 

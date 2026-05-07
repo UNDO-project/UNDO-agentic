@@ -46,9 +46,32 @@ Examples:
     )
     parser.add_argument(
         "--scenario",
-        choices=[s.value for s in AnalysisScenario],
         default=AnalysisScenario.BASIC.value,
-        help="Analysis scenario preset (default: basic)",
+        help="Analysis scenario preset: basic | full (default: basic)",
+    )
+    parser.add_argument(
+        "--heatmap",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Override the preset for heatmap generation (--heatmap / --no-heatmap)",
+    )
+    parser.add_argument(
+        "--hotspots",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Override the preset for hotspot generation. Toggles both the "
+            "DBSCAN clustering output and the matplotlib plot together."
+        ),
+    )
+    parser.add_argument(
+        "--charts",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Override the preset for chart generation. Toggles the privacy "
+            "pie, zone-sensitivity bar, and sensitivity-reasons bar together."
+        ),
     )
     parser.add_argument(
         "--output-dir",
@@ -113,7 +136,26 @@ Examples:
         default=None,
     )
 
-    return parser.parse_args()
+    args = parser.parse_args()
+
+    # Migration guard for the dropped scenarios. Raise a clear error
+    # pointing at the new toggle flags rather than letting a downstream
+    # ValueError surface deep in the pipeline.
+    removed = {"quick", "report", "mapping"}
+    if args.scenario in removed:
+        parser.error(
+            f"--scenario {args.scenario!r} was removed. Use "
+            f"--scenario basic or --scenario full and override individual "
+            f"outputs with --heatmap/--no-heatmap, --hotspots/--no-hotspots, "
+            f"--charts/--no-charts."
+        )
+    if args.scenario not in {s.value for s in AnalysisScenario}:
+        parser.error(
+            f"--scenario {args.scenario!r} is not recognised. "
+            f"Valid choices: basic, full."
+        )
+
+    return args
 
 
 def display_results(results: dict):
@@ -271,6 +313,19 @@ def main():
         config_kwargs["analyze_enabled"] = False
     if args.force_refresh:
         config_kwargs["force_refresh"] = True
+
+    # Toggle overrides layered on top of the preset. Each flag covers a
+    # natural visualisation group; the underlying ``PipelineConfig`` fields
+    # are flipped together so the CLI surface stays small.
+    if args.heatmap is not None:
+        config_kwargs["generate_heatmap"] = args.heatmap
+    if args.hotspots is not None:
+        config_kwargs["generate_hotspots"] = args.hotspots
+        config_kwargs["plot_hotspots"] = args.hotspots
+    if args.charts is not None:
+        config_kwargs["generate_chart"] = args.charts
+        config_kwargs["plot_zone_sensitivity"] = args.charts
+        config_kwargs["plot_sensitivity_reasons"] = args.charts
 
     # Routing configuration
     if args.enable_routing:

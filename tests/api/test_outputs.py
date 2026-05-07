@@ -72,6 +72,11 @@ def mock_output_files(tmp_path, monkeypatch):
         json.dumps({"type": "Feature", "geometry": {}, "properties": {}})
     )
 
+    # LLM-generated city report (Architecture Proposal #2)
+    (output_dir / f"{TEST_CITY}_report.md").write_text(
+        "## Overview\nstubbed report.\n", encoding="utf-8"
+    )
+
     from src.api.routes import outputs
 
     monkeypatch.setattr(outputs, "OUTPUT_BASE_DIR", output_dir)
@@ -191,6 +196,23 @@ def test_get_city_charts_invalid_type(mock_output_files):
 
     assert response.status_code == 400
     assert "invalid chart type" in response.json()["detail"].lower()
+
+
+def test_get_city_report(mock_output_files):
+    """Report endpoint serves ``<city>_report.md`` as text/markdown."""
+    response = client.get(f"/api/v1/outputs/{TEST_CITY}/report")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/markdown")
+    assert "## Overview" in response.text
+
+
+def test_get_city_report_not_found():
+    """A city with no generated report returns 404."""
+    response = client.get("/api/v1/outputs/NonExistentCity/report")
+
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"].lower()
 
 
 def test_list_city_files(mock_output_files):

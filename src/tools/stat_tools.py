@@ -29,6 +29,9 @@ def compute_statistics(elements: List[Dict[str, Any]]) -> Dict[str, Any]:
         a.get("camera_type") for a in analysis if a.get("camera_type")
     )
     operator_counts = Counter(a.get("operator") for a in analysis if a.get("operator"))
+    manufacturer_counts = Counter(
+        a.get("manufacturer") for a in analysis if a.get("manufacturer")
+    )
 
     return {
         "total": total,
@@ -39,4 +42,5 @@ def compute_statistics(elements: List[Dict[str, Any]]) -> Dict[str, Any]:
         "zone_sensitivity_counts": zone_sensitivity,
         "camera_type_counts": camera_type_counts,
         "operator_counts": operator_counts,
+        "manufacturer_counts": manufacturer_counts,
     }

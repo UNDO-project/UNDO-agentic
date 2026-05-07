@@ -282,8 +282,12 @@ async def execute_pipeline_task(task_id: str, request: PipelineRequest) -> None:
         if await _check_and_broadcast_cancellation(task_id, "initialization"):
             return
 
-        # Build configuration from request
+        # Build configuration from request. Toggle overrides are layered
+        # on top of the scenario preset by ``create_pipeline`` (which does
+        # ``setattr`` per kwarg), so we only need to dump the set fields.
         config_kwargs = {"force_refresh": request.force_refresh}
+        if request.overrides is not None:
+            config_kwargs.update(request.overrides.model_dump(exclude_none=True))
 
         # Add routing config if provided
         if request.routing_config:

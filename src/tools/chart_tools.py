@@ -216,6 +216,62 @@ def plot_operator_distribution(
     )
 
 
+def plot_install_timeline(
+    stats: Dict[str, Any],
+    output_dir: Path,
+    filename: str = "install_timeline.png",
+) -> Path:
+    """
+    Build and save a bar chart of camera count by install year.
+
+    The ``"unknown"`` bin (cameras whose ``start_date`` was missing or
+    non-parseable) is pinned to the leftmost bar so the gap in OSM
+    tagging is always visible at a glance. Numeric years follow,
+    sorted ascending.
+
+    :param stats: Summary-stats dict from ``compute_statistics``.
+        Must carry ``start_year_counts``.
+    :param output_dir: Directory to save the chart.
+    :param filename: Output filename. Callers pass
+        ``install_timeline_<city>.png`` to namespace per-city artifacts.
+    :return: Path to the written PNG.
+    """
+    counts: Counter = stats.get("start_year_counts") or Counter()
+
+    unknown = int(counts.get("unknown", 0))
+    year_items = sorted(
+        ((str(k), int(v)) for k, v in counts.items() if k != "unknown"),
+        key=lambda kv: kv[0],
+    )
+
+    labels: list = []
+    values: list = []
+    if unknown > 0:
+        labels.append("unknown")
+        values.append(unknown)
+    labels.extend(k for k, _ in year_items)
+    values.extend(v for _, v in year_items)
+
+    if not labels:
+        labels = ["(no data)"]
+        values = [0]
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.bar(labels, values)
+    ax.set_xlabel("Install year")
+    ax.set_ylabel("Camera count")
+    ax.set_title("Cameras by install year")
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(labels, rotation=45, ha="right")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    out_path = output_dir / filename
+    fig.tight_layout()
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+    return out_path
+
+
 def plot_manufacturer_distribution(
     stats: Dict[str, Any],
     output_dir: Path,

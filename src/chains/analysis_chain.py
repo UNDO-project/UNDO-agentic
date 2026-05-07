@@ -313,6 +313,8 @@ class AnalysisChain:
             plot_zone_sensitivity,
             plot_sensitivity_reasons,
             plot_hotspots as plot_hotspots_chart,
+            plot_operator_distribution,
+            plot_manufacturer_distribution,
         )
 
         errors = []
@@ -403,6 +405,42 @@ class AnalysisChain:
                     logger.info(f"Generated hotspots chart at {chart_path}")
                 except Exception as e:
                     error_msg = f"Hotspots chart failed: {e}"
+                    logger.error(error_msg)
+                    errors.append(error_msg)
+
+            # Per-city stems on these charts so a casually-downloaded PNG
+            # is self-identifying without depending on the directory name.
+            city_stem = Path(context["path"]).stem
+
+            if options.get("plot_operator_distribution"):
+                try:
+                    chart_path = plot_operator_distribution(
+                        context["stats"],
+                        output_dir,
+                        filename=f"operator_distribution_{city_stem}.png",
+                    )
+                    context["operator_chart_path"] = str(chart_path)
+                    logger.info(
+                        f"Generated operator distribution chart at {chart_path}"
+                    )
+                except Exception as e:
+                    error_msg = f"Operator distribution chart failed: {e}"
+                    logger.error(error_msg)
+                    errors.append(error_msg)
+
+            if options.get("plot_manufacturer_distribution"):
+                try:
+                    chart_path = plot_manufacturer_distribution(
+                        context["stats"],
+                        output_dir,
+                        filename=f"manufacturer_distribution_{city_stem}.png",
+                    )
+                    context["manufacturer_chart_path"] = str(chart_path)
+                    logger.info(
+                        f"Generated manufacturer distribution chart at {chart_path}"
+                    )
+                except Exception as e:
+                    error_msg = f"Manufacturer distribution chart failed: {e}"
                     logger.error(error_msg)
                     errors.append(error_msg)
 

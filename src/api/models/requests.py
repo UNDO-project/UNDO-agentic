@@ -52,6 +52,10 @@ class OutputOverrides(BaseModel):
         default=None,
         description="Render the top-N manufacturer distribution bar chart",
     )
+    plot_install_timeline: Optional[bool] = Field(
+        default=None,
+        description="Render the install-year timeline bar chart",
+    )
     generate_report: Optional[bool] = Field(
         default=None,
         description="Generate an LLM-written markdown city report (<city>_report.md)",

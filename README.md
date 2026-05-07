@@ -16,7 +16,7 @@ The pipeline consists of three main agents:
 - **Dual interface**: Rich CLI and production-ready FastAPI REST API
 - **Real-time updates**: WebSocket support for live pipeline progress
 - **Intelligent caching**: Agent memory stores results to avoid redundant computation
-- **Multiple analysis scenarios**: Configurable presets (basic, full, quick, report, mapping)
+- **Analysis presets + overrides**: Two scenario presets (`basic`, `full`) layered with per-output toggle overrides via CLI flags or the API `overrides` field
 - **Comprehensive visualizations**: Heatmaps, hotspots, route maps, and statistical charts
 - **Spatial optimization**: Efficient GeoDataFrame indexing for large camera datasets
 
@@ -136,18 +136,32 @@ python main.py Berlin
 # Specify country for disambiguation
 python main.py Athens --country GR
 
-# Use different analysis scenarios
+# Use a different scenario preset
 python main.py Hamburg --scenario full
-python main.py Munich --scenario quick
+
+# Layer per-output toggles on top of a preset (basic + heatmap, no charts)
+python main.py Munich --scenario basic --heatmap --no-charts
 ```
 
 ### Analysis Scenarios
 
-- `basic` (default): Essential analysis producing key files
-- `full`: Complete analysis with all visualizations and reports
-- `quick`: Fast analysis with minimal processing
-- `report`: Focus on statistical summaries and charts
-- `mapping`: Emphasis on geospatial visualizations
+Two presets are available:
+
+- `basic` (default): enriched data + summary statistics
+- `full`: every output enabled (heatmap, hotspots, charts, stats)
+
+Override individual outputs from either preset using CLI toggle flags
+(or the `overrides` field on the API request body):
+
+- `--heatmap` / `--no-heatmap`
+- `--hotspots` / `--no-hotspots` (DBSCAN clusters + scatter plot)
+- `--charts` / `--no-charts` (privacy pie + zone-sensitivity + sensitivity-reasons)
+
+> **Migration note:** the previous `quick`, `report`, and `mapping` scenarios
+> were removed. `quick` was identical to `basic`; `report` and `mapping` are
+> now expressed as `basic` plus the relevant `--charts` or
+> `--heatmap`/`--hotspots` toggles (or the API `overrides` block).
+> Requests using the removed values now return HTTP 422.
 
 ### Low-Surveillance Routing
 

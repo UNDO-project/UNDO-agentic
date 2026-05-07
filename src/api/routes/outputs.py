@@ -77,6 +77,7 @@ def get_mime_type(file_path: Path) -> str:
         ".json": "application/json",
         ".geojson": "application/geo+json",
         ".html": "text/html",
+        ".md": "text/markdown",
         ".png": "image/png",
         ".jpg": "image/jpeg",
         ".jpeg": "image/jpeg",
@@ -206,6 +207,31 @@ async def get_city_charts(city: str, chart: str):
     return FileResponse(
         path=file_path,
         media_type=get_mime_type(file_path),
+        filename=file_path.name,
+    )
+
+
+@router.get("/{city}/report")
+async def get_city_report(city: str):
+    """
+    Get the LLM-generated markdown city report.
+
+    Served as ``text/markdown`` so the frontend (or curl) can render or
+    download it directly. Looks for ``<city>_report.md`` in the city's
+    output directory; returns 404 when the report wasn't generated for
+    this run.
+
+    :param city: City name
+    :return: Markdown file
+    :raises HTTPException: 404 if the report file does not exist
+    """
+    base = resolve_city_base(city)
+    file_path = base / f"{city}_report.md"
+    validate_path(file_path)
+
+    return FileResponse(
+        path=file_path,
+        media_type="text/markdown",
         filename=file_path.name,
     )
 

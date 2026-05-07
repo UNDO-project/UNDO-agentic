@@ -44,6 +44,10 @@ class OutputOverrides(BaseModel):
     plot_hotspots: Optional[bool] = Field(
         default=None, description="Render the hotspots scatter plot (PNG)"
     )
+    generate_report: Optional[bool] = Field(
+        default=None,
+        description="Generate an LLM-written markdown city report (<city>_report.md)",
+    )
 
 
 class ScrapeRequest(BaseModel):

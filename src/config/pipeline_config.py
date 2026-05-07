@@ -80,6 +80,10 @@ class PipelineConfig(BaseModel):
         default=False,
         description="Plot top-N manufacturer distribution as a horizontal bar chart",
     )
+    plot_install_timeline: bool = Field(
+        default=False,
+        description="Plot a bar chart of camera count by install year (start_date)",
+    )
     generate_report: bool = Field(
         default=False,
         description=(
@@ -152,6 +156,7 @@ class PipelineConfig(BaseModel):
                 plot_hotspots=True,
                 plot_operator_distribution=True,
                 plot_manufacturer_distribution=True,
+                plot_install_timeline=True,
                 generate_report=True,
             )
 
@@ -179,5 +184,6 @@ class PipelineConfig(BaseModel):
             "plot_hotspots": self.plot_hotspots,
             "plot_operator_distribution": self.plot_operator_distribution,
             "plot_manufacturer_distribution": self.plot_manufacturer_distribution,
+            "plot_install_timeline": self.plot_install_timeline,
             "generate_report": self.generate_report,
         }

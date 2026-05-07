@@ -11,6 +11,41 @@ from pydantic import BaseModel, Field, ConfigDict
 from src.config.pipeline_config import AnalysisScenario
 
 
+class OutputOverrides(BaseModel):
+    """
+    Per-toggle overrides layered on top of the chosen ``AnalysisScenario``.
+
+    Every field is optional. Only the fields the caller sets are merged
+    into the preset's ``PipelineConfig``; unset fields keep the preset's
+    default. Pass an empty object to keep the preset baseline exactly.
+    """
+
+    generate_geojson: Optional[bool] = Field(
+        default=None, description="Write the enriched-camera GeoJSON"
+    )
+    compute_stats: Optional[bool] = Field(
+        default=None, description="Compute the summary statistics dict"
+    )
+    generate_chart: Optional[bool] = Field(
+        default=None, description="Render the public/private privacy pie chart"
+    )
+    generate_heatmap: Optional[bool] = Field(
+        default=None, description="Render the folium heatmap (HTML)"
+    )
+    generate_hotspots: Optional[bool] = Field(
+        default=None, description="Compute DBSCAN hotspots GeoJSON"
+    )
+    plot_zone_sensitivity: Optional[bool] = Field(
+        default=None, description="Render the zone-sensitivity stacked bar chart"
+    )
+    plot_sensitivity_reasons: Optional[bool] = Field(
+        default=None, description="Render the sensitivity-reasons bar chart"
+    )
+    plot_hotspots: Optional[bool] = Field(
+        default=None, description="Render the hotspots scatter plot (PNG)"
+    )
+
+
 class ScrapeRequest(BaseModel):
     """
     Request model for scraping surveillance data from OpenStreetMap.
@@ -59,7 +94,7 @@ class AnalyzeRequest(BaseModel):
     )
     scenario: AnalysisScenario = Field(
         default=AnalysisScenario.BASIC,
-        description="Analysis scenario preset (basic, full, quick, report, mapping)",
+        description="Analysis scenario preset (basic, full)",
     )
 
 
@@ -124,6 +159,7 @@ class PipelineRequest(BaseModel):
     :param city: City name to analyze
     :param country: Optional ISO country code
     :param scenario: Analysis scenario preset
+    :param overrides: Optional per-toggle overrides layered over the preset
     :param routing_config: Optional routing configuration (enables routing if provided)
     """
 
@@ -131,6 +167,12 @@ class PipelineRequest(BaseModel):
         json_schema_extra={
             "examples": [
                 {"city": "Berlin", "country": "DE", "scenario": "basic"},
+                {
+                    "city": "Berlin",
+                    "country": "DE",
+                    "scenario": "basic",
+                    "overrides": {"generate_heatmap": True},
+                },
                 {
                     "city": "Lund",
                     "country": "SE",
@@ -155,7 +197,15 @@ class PipelineRequest(BaseModel):
     )
     scenario: AnalysisScenario = Field(
         default=AnalysisScenario.BASIC,
-        description="Analysis scenario preset",
+        description="Analysis scenario preset (basic, full)",
+    )
+    overrides: Optional[OutputOverrides] = Field(
+        default=None,
+        description=(
+            "Per-toggle overrides layered on top of the scenario preset. "
+            "Only fields explicitly set are applied; unset fields inherit "
+            "the preset's value."
+        ),
     )
     routing_config: Optional[RouteComputeRequest] = Field(
         default=None,

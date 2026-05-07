@@ -70,7 +70,8 @@ Examples:
         default=None,
         help=(
             "Override the preset for chart generation. Toggles the privacy "
-            "pie, zone-sensitivity bar, and sensitivity-reasons bar together."
+            "pie, zone-sensitivity bar, sensitivity-reasons bar, and the "
+            "operator/manufacturer distribution bars together."
         ),
     )
     parser.add_argument(
@@ -335,6 +336,8 @@ def main():
         config_kwargs["generate_chart"] = args.charts
         config_kwargs["plot_zone_sensitivity"] = args.charts
         config_kwargs["plot_sensitivity_reasons"] = args.charts
+        config_kwargs["plot_operator_distribution"] = args.charts
+        config_kwargs["plot_manufacturer_distribution"] = args.charts
     if args.report is not None:
         config_kwargs["generate_report"] = args.report
 

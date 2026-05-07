@@ -72,6 +72,14 @@ class PipelineConfig(BaseModel):
     plot_hotspots: bool = Field(
         default=False, description="Plot hotspots visualization"
     )
+    plot_operator_distribution: bool = Field(
+        default=False,
+        description="Plot top-N operator distribution as a horizontal bar chart",
+    )
+    plot_manufacturer_distribution: bool = Field(
+        default=False,
+        description="Plot top-N manufacturer distribution as a horizontal bar chart",
+    )
     generate_report: bool = Field(
         default=False,
         description=(
@@ -142,6 +150,8 @@ class PipelineConfig(BaseModel):
                 plot_zone_sensitivity=True,
                 plot_sensitivity_reasons=True,
                 plot_hotspots=True,
+                plot_operator_distribution=True,
+                plot_manufacturer_distribution=True,
                 generate_report=True,
             )
 
@@ -167,5 +177,7 @@ class PipelineConfig(BaseModel):
             "plot_zone_sensitivity": self.plot_zone_sensitivity,
             "plot_sensitivity_reasons": self.plot_sensitivity_reasons,
             "plot_hotspots": self.plot_hotspots,
+            "plot_operator_distribution": self.plot_operator_distribution,
+            "plot_manufacturer_distribution": self.plot_manufacturer_distribution,
             "generate_report": self.generate_report,
         }

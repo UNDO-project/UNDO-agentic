@@ -74,6 +74,15 @@ Examples:
         ),
     )
     parser.add_argument(
+        "--report",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Override the preset for the LLM-written markdown city report "
+            "(--report / --no-report)."
+        ),
+    )
+    parser.add_argument(
         "--output-dir",
         help="Output directory for results",
         default=None,
@@ -326,6 +335,8 @@ def main():
         config_kwargs["generate_chart"] = args.charts
         config_kwargs["plot_zone_sensitivity"] = args.charts
         config_kwargs["plot_sensitivity_reasons"] = args.charts
+    if args.report is not None:
+        config_kwargs["generate_report"] = args.report
 
     # Routing configuration
     if args.enable_routing:

@@ -54,6 +54,7 @@ def test_full_flips_every_output_toggle_on():
     assert cfg.plot_hotspots is True
     assert cfg.plot_operator_distribution is True
     assert cfg.plot_manufacturer_distribution is True
+    assert cfg.plot_install_timeline is True
     assert cfg.generate_report is True
 
 
@@ -84,3 +85,12 @@ def test_to_analyzer_options_carries_distribution_chart_toggles():
     options2 = cfg2.to_analyzer_options()
     assert options2["plot_operator_distribution"] is False
     assert options2["plot_manufacturer_distribution"] is False
+
+
+def test_to_analyzer_options_carries_install_timeline_toggle():
+    """The install-timeline toggle propagates via the options dict."""
+    cfg = PipelineConfig.from_scenario(AnalysisScenario.FULL)
+    assert cfg.to_analyzer_options()["plot_install_timeline"] is True
+
+    cfg2 = PipelineConfig.from_scenario(AnalysisScenario.BASIC)
+    assert cfg2.to_analyzer_options()["plot_install_timeline"] is False

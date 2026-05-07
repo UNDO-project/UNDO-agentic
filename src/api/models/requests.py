@@ -44,6 +44,14 @@ class OutputOverrides(BaseModel):
     plot_hotspots: Optional[bool] = Field(
         default=None, description="Render the hotspots scatter plot (PNG)"
     )
+    plot_operator_distribution: Optional[bool] = Field(
+        default=None,
+        description="Render the top-N operator distribution bar chart",
+    )
+    plot_manufacturer_distribution: Optional[bool] = Field(
+        default=None,
+        description="Render the top-N manufacturer distribution bar chart",
+    )
     generate_report: Optional[bool] = Field(
         default=None,
         description="Generate an LLM-written markdown city report (<city>_report.md)",

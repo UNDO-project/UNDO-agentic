@@ -70,6 +70,11 @@ pytest tests/tools/test_chart_tools.py
 echo "Done..."
 echo "==============================================="
 
+echo "Running stat tools tests"
+pytest tests/tools/test_stat_tools.py
+echo "Done..."
+echo "==============================================="
+
 echo "Running memory store tests"
 pytest tests/memory/test_memory_store.py
 echo "Done..."

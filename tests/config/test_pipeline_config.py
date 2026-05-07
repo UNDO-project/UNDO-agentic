@@ -52,6 +52,8 @@ def test_full_flips_every_output_toggle_on():
     assert cfg.plot_zone_sensitivity is True
     assert cfg.plot_sensitivity_reasons is True
     assert cfg.plot_hotspots is True
+    assert cfg.plot_operator_distribution is True
+    assert cfg.plot_manufacturer_distribution is True
     assert cfg.generate_report is True
 
 
@@ -69,3 +71,16 @@ def test_to_analyzer_options_carries_generate_report():
 
     cfg2 = PipelineConfig.from_scenario(AnalysisScenario.BASIC)
     assert cfg2.to_analyzer_options()["generate_report"] is False
+
+
+def test_to_analyzer_options_carries_distribution_chart_toggles():
+    """Operator + manufacturer distribution toggles propagate via the options dict."""
+    cfg = PipelineConfig.from_scenario(AnalysisScenario.FULL)
+    options = cfg.to_analyzer_options()
+    assert options["plot_operator_distribution"] is True
+    assert options["plot_manufacturer_distribution"] is True
+
+    cfg2 = PipelineConfig.from_scenario(AnalysisScenario.BASIC)
+    options2 = cfg2.to_analyzer_options()
+    assert options2["plot_operator_distribution"] is False
+    assert options2["plot_manufacturer_distribution"] is False

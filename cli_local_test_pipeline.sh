@@ -40,8 +40,18 @@ pytest tests/llm/test_surveillance_llm_batch.py
 echo "Done..."
 echo "==============================================="
 
+echo "Running SurveillanceLLM city report tests"
+pytest tests/llm/test_surveillance_llm_report.py
+echo "Done..."
+echo "==============================================="
+
 echo "Running analysis chain batch enrichment tests"
 pytest tests/chains/test_analysis_chain_batch.py
+echo "Done..."
+echo "==============================================="
+
+echo "Running analysis chain report step tests"
+pytest tests/chains/test_analysis_chain_report.py
 echo "Done..."
 echo "==============================================="
 

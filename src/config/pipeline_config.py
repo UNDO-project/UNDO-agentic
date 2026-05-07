@@ -72,6 +72,15 @@ class PipelineConfig(BaseModel):
     plot_hotspots: bool = Field(
         default=False, description="Plot hotspots visualization"
     )
+    generate_report: bool = Field(
+        default=False,
+        description=(
+            "Generate an LLM-written markdown report (<city>_report.md) "
+            "summarizing the city's surveillance posture. Depends on "
+            "compute_stats=True; failures land in visualization_errors "
+            "and never abort the run."
+        ),
+    )
 
     # Pipeline behavior
     stop_on_error: bool = Field(
@@ -133,6 +142,7 @@ class PipelineConfig(BaseModel):
                 plot_zone_sensitivity=True,
                 plot_sensitivity_reasons=True,
                 plot_hotspots=True,
+                generate_report=True,
             )
 
         # BASIC baseline: enriched data + stats, no charts or maps.
@@ -157,4 +167,5 @@ class PipelineConfig(BaseModel):
             "plot_zone_sensitivity": self.plot_zone_sensitivity,
             "plot_sensitivity_reasons": self.plot_sensitivity_reasons,
             "plot_hotspots": self.plot_hotspots,
+            "generate_report": self.generate_report,
         }

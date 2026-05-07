@@ -97,6 +97,7 @@ class SurveillanceAnalyzerAgent:
                 "plot_sensitivity_reasons", False
             ),
             "plot_hotspots": input_data.get("plot_hotspots", False),
+            "generate_report": input_data.get("generate_report", False),
         }
 
         try:
@@ -136,6 +137,8 @@ class SurveillanceAnalyzerAgent:
                 ]
             if "hotspots_chart" in result:
                 response["hotspots_chart"] = result["hotspots_chart"]
+            if "report_path" in result:
+                response["report_path"] = result["report_path"]
 
             # Add visualization errors if any
             if "visualization_errors" in result:

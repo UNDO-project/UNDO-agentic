@@ -154,6 +154,35 @@ Examples:
         help="Ending longitude for route",
         default=None,
     )
+    parser.add_argument(
+        "--filter-sensitive",
+        action="store_true",
+        help=(
+            "Restrict routing exposure scoring to cameras the analyzer "
+            "flagged as sensitive. No effect without --enable-routing."
+        ),
+    )
+    parser.add_argument(
+        "--filter-operator",
+        action="append",
+        default=None,
+        metavar="NAME",
+        help=(
+            "Restrict routing exposure scoring to cameras whose operator "
+            "matches NAME. Repeatable to whitelist multiple operators."
+        ),
+    )
+    parser.add_argument(
+        "--filter-surveillance-type",
+        action="append",
+        default=None,
+        metavar="TYPE",
+        help=(
+            "Restrict routing exposure scoring to cameras whose "
+            "surveillance_type matches TYPE (e.g. 'camera', 'guard'). "
+            "Repeatable."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -360,6 +389,22 @@ def main():
         config_kwargs["start_lon"] = args.start_lon
         config_kwargs["end_lat"] = args.end_lat
         config_kwargs["end_lon"] = args.end_lon
+
+        # Build the camera filter only when at least one constraint was
+        # asked for, so an unset CLI run keeps ``camera_filter=None`` and
+        # reuses old cache entries / scoring behaviour exactly.
+        if (
+            args.filter_sensitive
+            or args.filter_operator
+            or args.filter_surveillance_type
+        ):
+            from src.config.models.route_models import CameraFilter
+
+            config_kwargs["camera_filter"] = CameraFilter(
+                sensitive_only=bool(args.filter_sensitive),
+                operators=args.filter_operator,
+                surveillance_types=args.filter_surveillance_type,
+            )
 
     # Create and run pipeline
     try:

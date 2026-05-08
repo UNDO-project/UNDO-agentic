@@ -39,13 +39,16 @@ PNG_BYTES = bytes.fromhex(
 @pytest.fixture
 def mock_output_files(tmp_path, monkeypatch):
     """
-    Create mock output files matching the analyzer's actual filenames.
+    Create mock output files matching the analyzer's actual filenames
+    and per-city directory layout (``overpass_data/<city>/``).
 
     :param tmp_path: pytest temporary directory fixture
     :param monkeypatch: pytest monkeypatch fixture
-    :return: Path to mock output directory
+    :return: Path to mock per-city output directory
     """
-    output_dir = tmp_path / "overpass_data"
+    base_dir = tmp_path / "overpass_data"
+    base_dir.mkdir()
+    output_dir = base_dir / TEST_CITY
     output_dir.mkdir()
 
     # Enriched + raw GeoJSON
@@ -79,7 +82,7 @@ def mock_output_files(tmp_path, monkeypatch):
 
     from src.api.routes import outputs
 
-    monkeypatch.setattr(outputs, "OUTPUT_BASE_DIR", output_dir)
+    monkeypatch.setattr(outputs, "OUTPUT_BASE_DIR", base_dir)
 
     return output_dir
 
@@ -232,6 +235,66 @@ def test_list_city_files(mock_output_files):
         assert "size_bytes" in file_info
         assert "modified" in file_info
         assert "type" in file_info
+
+
+def test_list_city_files_excludes_cache_sidecars(tmp_path, monkeypatch):
+    """
+    ``*.cache.json`` sidecars written by the per-artifact
+    visualisation cache must never appear in the user-facing list,
+    even though they live in the same per-city directory.
+    """
+    base_dir = tmp_path / "overpass_data"
+    output_dir = base_dir / TEST_CITY
+    output_dir.mkdir(parents=True)
+    (output_dir / f"{TEST_CITY}_heatmap.html").write_text("<html/>")
+    (output_dir / f"{TEST_CITY}_heatmap.html.cache.json").write_text(
+        '{"key": "deadbeef", "ts": "2026-05-08T00:00:00Z"}'
+    )
+    (output_dir / f"{TEST_CITY}_report.md").write_text("## Overview\n")
+    (output_dir / f"{TEST_CITY}_report.md.cache.json").write_text(
+        '{"key": "cafe", "ts": "2026-05-08T00:00:00Z"}'
+    )
+
+    from src.api.routes import outputs
+
+    monkeypatch.setattr(outputs, "OUTPUT_BASE_DIR", base_dir)
+
+    response = client.get(f"/api/v1/outputs/{TEST_CITY}/list")
+    assert response.status_code == 200
+    names = {f["name"] for f in response.json()["files"]}
+
+    assert f"{TEST_CITY}_heatmap.html" in names
+    assert f"{TEST_CITY}_report.md" in names
+    assert not any(name.endswith(".cache.json") for name in names), (
+        "Sidecar files leaked into the user-facing outputs list"
+    )
+
+
+def test_list_city_files_includes_suffix_named_charts(tmp_path, monkeypatch):
+    """
+    Charts written as ``<artifact>_<city>.png`` (city stem at
+    the end) must be returned by ``/list`` so the dashboard's
+    ``findFile`` lookup can discover them. The pre-fix prefix glob
+    silently dropped these files.
+    """
+    base_dir = tmp_path / "overpass_data"
+    output_dir = base_dir / TEST_CITY
+    output_dir.mkdir(parents=True)
+    (output_dir / f"operator_distribution_{TEST_CITY}.png").write_bytes(PNG_BYTES)
+    (output_dir / f"manufacturer_distribution_{TEST_CITY}.png").write_bytes(PNG_BYTES)
+    (output_dir / f"install_timeline_{TEST_CITY}.png").write_bytes(PNG_BYTES)
+
+    from src.api.routes import outputs
+
+    monkeypatch.setattr(outputs, "OUTPUT_BASE_DIR", base_dir)
+
+    response = client.get(f"/api/v1/outputs/{TEST_CITY}/list")
+    assert response.status_code == 200
+    names = {f["name"] for f in response.json()["files"]}
+
+    assert f"operator_distribution_{TEST_CITY}.png" in names
+    assert f"manufacturer_distribution_{TEST_CITY}.png" in names
+    assert f"install_timeline_{TEST_CITY}.png" in names
 
 
 def test_list_city_files_no_files():

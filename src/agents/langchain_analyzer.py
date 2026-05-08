@@ -105,6 +105,7 @@ class SurveillanceAnalyzerAgent:
             ),
             "plot_install_timeline": input_data.get("plot_install_timeline", False),
             "generate_report": input_data.get("generate_report", False),
+            "force_rerender": input_data.get("force_rerender", False),
         }
 
         try:

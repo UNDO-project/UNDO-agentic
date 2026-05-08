@@ -10,6 +10,7 @@ from src.agents.surveillance_data_collector import (
 from src.agents.langchain_analyzer import SurveillanceAnalyzerAgent
 from src.agents.route_finder_agent import RouteFinderAgent
 from src.config.logger import logger
+from src.llm.surveillance_llm import check_ollama_reachable
 from src.config.pipeline_config import PipelineConfig, AnalysisScenario
 from src.config.settings import DatabaseSettings, LangChainSettings, RouteSettings
 from src.config.models.route_models import RouteRequest
@@ -143,6 +144,17 @@ class SurveillancePipeline:
         }
 
         try:
+            # Preflight: fail fast if Ollama is down so we don't sink
+            # minutes into a scrape whose enrichment would 100% fail.
+            # Skipped when the analyzer is disabled — Ollama isn't needed.
+            if self.config.analyze_enabled:
+                try:
+                    check_ollama_reachable(self.settings)
+                except RuntimeError as e:
+                    logger.error(str(e))
+                    results["error"] = str(e)
+                    return self._finalize_results(results, PipelineStatus.FAILED)
+
             # Step 1: Scraping
             if self.config.scrape_enabled:
                 # Check for cancellation before scraping

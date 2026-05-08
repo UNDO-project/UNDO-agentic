@@ -392,5 +392,32 @@ def create_surveillance_llm(
         raise
 
 
+def check_ollama_reachable(settings: Optional[LangChainSettings] = None) -> None:
+    """
+    Probe the Ollama server so the pipeline fails fast when the daemon
+    isn't running, instead of silently producing 0/N enriched cameras
+    via per-element ``Connection refused`` warnings.
+
+    Hits Ollama's ``/api/tags`` endpoint (cheap, doesn't load a model)
+    with a short timeout. Returns ``None`` on success; raises
+    ``RuntimeError`` with a user-actionable message otherwise.
+
+    :param settings: LangChain settings. Defaults are loaded from .env.
+    :raises RuntimeError: If the server is unreachable or returns non-2xx.
+    """
+    import requests
+
+    s = settings or LangChainSettings()
+    url = f"{s.ollama_base_url.rstrip('/')}/api/tags"
+    try:
+        requests.get(url, timeout=3).raise_for_status()
+    except requests.exceptions.RequestException as e:
+        raise RuntimeError(
+            f"Ollama is not reachable at {s.ollama_base_url} "
+            f"(error: {e}). Start it with `ollama serve` and ensure model "
+            f"`{s.ollama_model}` is pulled."
+        ) from e
+
+
 # Backward compatibility alias
 LangChainLLM = SurveillanceLLM

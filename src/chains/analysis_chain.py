@@ -315,7 +315,13 @@ class AnalysisChain:
         is appended to ``errors`` (matching the legacy log format
         ``"<error_label> failed: <e>"``) and ``None`` is returned.
 
-        :return: The artifact path on success/cache-hit; ``None`` on failure.
+        ``fn`` returning ``None`` or ``False`` is interpreted as a
+        deliberate opt-out (e.g. an empty-counter chart). No sidecar is
+        written and ``None`` is returned, so the chain context never
+        records a path to a file that doesn't exist (HF#4).
+
+        :return: The artifact path on success/cache-hit; ``None`` on
+            failure or opt-out.
         """
         from src.tools.io_tools import cache_hit, write_sidecar
 
@@ -323,11 +329,14 @@ class AnalysisChain:
             logger.info(f"Reusing cached {vis_name} at {artifact_path}")
             return artifact_path
         try:
-            fn()
+            result = fn()
         except Exception as e:
             error_msg = f"{error_label} failed: {e}"
             logger.error(error_msg)
             errors.append(error_msg)
+            return None
+        if result is None or result is False:
+            logger.info(f"{vis_name}: nothing to render — skipping artifact")
             return None
         write_sidecar(artifact_path, cache_key)
         logger.info(f"Generated {vis_name} at {artifact_path}")
@@ -550,7 +559,7 @@ class AnalysisChain:
                 raw_path = Path(context["path"])
                 report_path = raw_path.with_name(f"{raw_path.stem}_report.md")
 
-                def _generate_report() -> None:
+                def _generate_report() -> Path:
                     sample = [
                         el
                         for el in context.get("enriched", [])
@@ -560,6 +569,9 @@ class AnalysisChain:
                     ]
                     markdown = self.llm.generate_city_report(context["stats"], sample)
                     report_path.write_text(markdown, encoding="utf-8")
+                    # Truthy return so ``_cached_step`` doesn't treat the
+                    # implicit ``None`` as an opt-out (HF#4).
+                    return report_path
 
                 out = self._cached_step(
                     vis_name="city report",

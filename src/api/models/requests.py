@@ -8,6 +8,7 @@ automatic validation, serialization, and documentation.
 from typing import Optional
 from pydantic import BaseModel, Field, ConfigDict
 
+from src.config.models.route_models import CameraFilter
 from src.config.pipeline_config import AnalysisScenario
 
 
@@ -163,6 +164,13 @@ class RouteComputeRequest(BaseModel):
     end_lat: float = Field(..., ge=-90.0, le=90.0, description="Ending point latitude")
     end_lon: float = Field(
         ..., ge=-180.0, le=180.0, description="Ending point longitude"
+    )
+    camera_filter: Optional[CameraFilter] = Field(
+        default=None,
+        description=(
+            "Optional camera filter narrowing which cameras feed into "
+            "routing exposure. Default (``None``) considers every camera."
+        ),
     )
 
 

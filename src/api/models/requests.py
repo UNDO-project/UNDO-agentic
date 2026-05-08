@@ -235,3 +235,11 @@ class PipelineRequest(BaseModel):
             "newly tagged in OSM before the configured TTL expires."
         ),
     )
+    force_rerender: bool = Field(
+        default=False,
+        description=(
+            "Bypass the per-artifact visualisation cache and redraw every "
+            "requested chart/map/report. Independent of ``force_refresh`` — "
+            "the enrichment cache is still honoured."
+        ),
+    )

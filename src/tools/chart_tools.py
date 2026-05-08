@@ -15,11 +15,19 @@ from shapely import Point
 from src.config.logger import logger
 
 
-def private_public_pie(stats: Dict[str, Any], output_dir: Path) -> Path:
+def private_public_pie(
+    stats: Dict[str, Any],
+    output_dir: Path,
+    filename: str = "privacy_distribution.png",
+) -> Path:
     """
     Build a pie / donut chart showing public vs private vs unknown cameras.
+
     :param stats: Summary-stats dict coming from `compute_statistics`
     :param output_dir: Directory to save the chart
+    :param filename: Output filename. The chain passes
+        ``<city>_privacy.png`` to namespace per-city artifacts; default
+        kept short for ad-hoc invocations.
     :return: A Path to the png file
     """
 
@@ -43,7 +51,7 @@ def private_public_pie(stats: Dict[str, Any], output_dir: Path) -> Path:
     ax.set(aspect="equal", title="Camera Privacy Distribution")
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    chart_path = output_dir / "privacy_distribution.png"
+    chart_path = output_dir / filename
     fig.savefig(chart_path, bbox_inches="tight")
     plt.close(fig)
 

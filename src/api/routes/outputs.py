@@ -124,13 +124,11 @@ async def get_city_map(city: str, map_type: str = "heatmap"):
     :return: HTML map file
     :raises HTTPException: 404 if file not found
     """
-    # Map file paths — these match what the analyzer writes today:
-    # ``<city>_heatmap.html`` (folium HTML) and
-    # ``hotspot_plot_<city>.png`` (matplotlib PNG of DBSCAN clusters).
+    # Map file paths — match the standardized ``<city>_<artifact>`` convention.
     base = resolve_city_base(city)
     map_files = {
         "heatmap": f"{city}_heatmap.html",
-        "hotspots": f"hotspot_plot_{city}.png",
+        "hotspots": f"{city}_hotspots.png",
     }
 
     if map_type not in map_files:
@@ -193,9 +191,9 @@ async def get_city_charts(city: str, chart: str):
     """
     base = resolve_city_base(city)
     if chart == "sensitivity":
-        file_path = base / f"{city}_enriched_sensitivity.png"
+        file_path = base / f"{city}_sensitivity_reasons.png"
     elif chart == "privacy":
-        file_path = base / "privacy_distribution.png"
+        file_path = base / f"{city}_privacy.png"
     else:
         raise HTTPException(
             status_code=400,
@@ -253,7 +251,7 @@ async def list_city_files(city: str):
     when present), so a directory listing is safe — and necessary,
     because some artifact filenames carry the city stem at the end
     rather than the start (e.g. ``operator_distribution_<city>.png``)
-    and would be missed by a prefix glob (HF#2).
+    and would be missed by a prefix glob.
 
     :param city: City name
     :return: JSON list of available files with metadata

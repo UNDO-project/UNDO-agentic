@@ -2,14 +2,10 @@
 Tests for file-serving endpoints.
 
 These tests pin the ``/api/v1/outputs/*`` route surface against the
-filenames the analyzer actually writes today
-(``<city>_heatmap.html``, ``hotspot_plot_<city>.png``,
-``hotspots_<city>.geojson``, ``privacy_distribution.png``,
-``<city>_enriched_sensitivity.png``, and the per-route files under
-``routes/route_<hash>.{html,geojson}``). The fixture city is
-lowercase to match the production filename casing produced by
-``SurveillanceDataCollector.scrape`` (which lowercases user input
-when building paths).
+standardized ``<city>_<artifact>.<ext>`` filename convention adopted.
+The fixture city is lowercase to match the production
+filename casing produced by ``SurveillanceDataCollector.scrape``
+(which lowercases user input when building paths).
 """
 
 import json
@@ -61,11 +57,11 @@ def mock_output_files(tmp_path, monkeypatch):
 
     # Maps (heatmap HTML, hotspots PNG)
     (output_dir / f"{TEST_CITY}_heatmap.html").write_text("<html>Heatmap</html>")
-    (output_dir / f"hotspot_plot_{TEST_CITY}.png").write_bytes(PNG_BYTES)
+    (output_dir / f"{TEST_CITY}_hotspots.png").write_bytes(PNG_BYTES)
 
-    # Charts: privacy + sensitivity (separate filename conventions)
-    (output_dir / "privacy_distribution.png").write_bytes(PNG_BYTES)
-    (output_dir / f"{TEST_CITY}_enriched_sensitivity.png").write_bytes(PNG_BYTES)
+    # Charts: privacy + sensitivity reasons
+    (output_dir / f"{TEST_CITY}_privacy.png").write_bytes(PNG_BYTES)
+    (output_dir / f"{TEST_CITY}_sensitivity_reasons.png").write_bytes(PNG_BYTES)
 
     # Per-route files live under routes/. Mirror the production layout.
     routes_dir = output_dir / "routes"
@@ -75,7 +71,7 @@ def mock_output_files(tmp_path, monkeypatch):
         json.dumps({"type": "Feature", "geometry": {}, "properties": {}})
     )
 
-    # LLM-generated city report (Architecture Proposal #2)
+    # LLM-generated city report
     (output_dir / f"{TEST_CITY}_report.md").write_text(
         "## Overview\nstubbed report.\n", encoding="utf-8"
     )
@@ -125,7 +121,7 @@ def test_get_city_map_heatmap(mock_output_files):
 
 
 def test_get_city_map_hotspots(mock_output_files):
-    """Hotspots endpoint serves ``hotspot_plot_<city>.png`` as image/png."""
+    """Hotspots endpoint serves ``<city>_hotspots.png`` as image/png."""
     response = client.get(f"/api/v1/outputs/{TEST_CITY}/map?map_type=hotspots")
 
     assert response.status_code == 200
@@ -176,7 +172,7 @@ def test_get_city_route_invalid_filetype(mock_output_files):
 
 
 def test_get_city_charts_privacy(mock_output_files):
-    """Privacy chart serves the shared ``privacy_distribution.png``."""
+    """Privacy chart serves ``<city>_privacy.png``."""
     response = client.get(f"/api/v1/outputs/{TEST_CITY}/charts?chart=privacy")
 
     assert response.status_code == 200
@@ -270,19 +266,18 @@ def test_list_city_files_excludes_cache_sidecars(tmp_path, monkeypatch):
     )
 
 
-def test_list_city_files_includes_suffix_named_charts(tmp_path, monkeypatch):
+def test_list_city_files_includes_distribution_charts(tmp_path, monkeypatch):
     """
-    Charts written as ``<artifact>_<city>.png`` (city stem at
-    the end) must be returned by ``/list`` so the dashboard's
-    ``findFile`` lookup can discover them. The pre-fix prefix glob
-    silently dropped these files.
+    Every distribution chart adopts the standardized
+    ``<city>_<artifact>.png`` convention and must appear in ``/list``
+    so the dashboard's ``findFile`` lookup can discover them.
     """
     base_dir = tmp_path / "overpass_data"
     output_dir = base_dir / TEST_CITY
     output_dir.mkdir(parents=True)
-    (output_dir / f"operator_distribution_{TEST_CITY}.png").write_bytes(PNG_BYTES)
-    (output_dir / f"manufacturer_distribution_{TEST_CITY}.png").write_bytes(PNG_BYTES)
-    (output_dir / f"install_timeline_{TEST_CITY}.png").write_bytes(PNG_BYTES)
+    (output_dir / f"{TEST_CITY}_operator_distribution.png").write_bytes(PNG_BYTES)
+    (output_dir / f"{TEST_CITY}_manufacturer_distribution.png").write_bytes(PNG_BYTES)
+    (output_dir / f"{TEST_CITY}_install_timeline.png").write_bytes(PNG_BYTES)
 
     from src.api.routes import outputs
 
@@ -292,9 +287,9 @@ def test_list_city_files_includes_suffix_named_charts(tmp_path, monkeypatch):
     assert response.status_code == 200
     names = {f["name"] for f in response.json()["files"]}
 
-    assert f"operator_distribution_{TEST_CITY}.png" in names
-    assert f"manufacturer_distribution_{TEST_CITY}.png" in names
-    assert f"install_timeline_{TEST_CITY}.png" in names
+    assert f"{TEST_CITY}_operator_distribution.png" in names
+    assert f"{TEST_CITY}_manufacturer_distribution.png" in names
+    assert f"{TEST_CITY}_install_timeline.png" in names
 
 
 def test_list_city_files_no_files():

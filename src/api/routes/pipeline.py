@@ -303,6 +303,8 @@ async def execute_pipeline_task(task_id: str, request: PipelineRequest) -> None:
                     "end_lon": request.routing_config.end_lon,
                 }
             )
+            if request.routing_config.camera_filter is not None:
+                config_kwargs["camera_filter"] = request.routing_config.camera_filter
 
         # Check for cancellation before scraping
         if await _check_and_broadcast_cancellation(task_id, "scraping"):

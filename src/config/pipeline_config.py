@@ -3,6 +3,8 @@ from enum import Enum
 
 from pydantic import BaseModel, Field, model_validator
 
+from src.config.models.route_models import CameraFilter
+
 
 class AnalysisScenario(str, Enum):
     """
@@ -60,6 +62,14 @@ class PipelineConfig(BaseModel):
     start_lon: Optional[float] = Field(default=None, description="Starting longitude")
     end_lat: Optional[float] = Field(default=None, description="Ending latitude")
     end_lon: Optional[float] = Field(default=None, description="Ending longitude")
+    camera_filter: Optional[CameraFilter] = Field(
+        default=None,
+        description=(
+            "Optional camera filter narrowing which cameras the routing "
+            "stage considers (operator / surveillance_type whitelists, "
+            "sensitive-only). ``None`` preserves old behaviour."
+        ),
+    )
 
     # Visualization flags
     generate_geojson: bool = Field(default=True, description="Generate GeoJSON output")

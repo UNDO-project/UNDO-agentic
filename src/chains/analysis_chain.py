@@ -367,10 +367,14 @@ class AnalysisChain:
         force_rerender = bool(options.get("force_rerender", False))
         raw_hash = str(context.get("raw_hash") or "")
 
-        # Generate heatmap
+        # Generate heatmap. The filename derives from the city stem
+        # (``<city>_heatmap.html``), not from the geojson path's
+        # suffix — the ``/api/v1/outputs/{city}/map?map_type=heatmap``
+        # route serves that exact name (HF#1).
         if options.get("generate_heatmap"):
             geojson_path = Path(context["geojson_path"])
-            heatmap_path = geojson_path.with_suffix(".html")
+            raw_path = Path(context["path"])
+            heatmap_path = raw_path.with_name(f"{raw_path.stem}_heatmap.html")
             out = self._cached_step(
                 vis_name="heatmap",
                 error_label="Heatmap generation",

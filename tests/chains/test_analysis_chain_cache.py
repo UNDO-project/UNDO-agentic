@@ -156,12 +156,15 @@ def test_heatmap_step_caches_after_first_run(tmp_path):
     The chart helper is patched so we can count invocations directly.
     First run calls it once and writes the sidecar; second run sees the
     cache hit and skips the call entirely.
+
+    The expected filename is ``<city>_heatmap.html`` (HF#1) — that's
+    what ``/api/v1/outputs/{city}/map?map_type=heatmap`` serves.
     """
     chain = _make_chain(_StubLLM())
     ctx = _ctx(tmp_path)
     options = {"compute_stats": False, "generate_heatmap": True}
 
-    expected_path = tmp_path / "lund_enriched.html"
+    expected_path = tmp_path / "lund_heatmap.html"
 
     def _fake_heatmap(geojson_path, output_html, *args, **kwargs):
         Path(output_html).write_text("<html>fake heatmap</html>", encoding="utf-8")
@@ -173,6 +176,9 @@ def test_heatmap_step_caches_after_first_run(tmp_path):
         out1 = chain.generate_visualizations(dict(ctx), options)
         assert out1.get("heatmap_path") == str(expected_path)
         assert mock_heatmap.call_count == 1
+        # Filename contract honoured: not ``lund_enriched.html``.
+        assert expected_path.exists()
+        assert not (tmp_path / "lund_enriched.html").exists()
 
         out2 = chain.generate_visualizations(dict(ctx), options)
         assert out2.get("heatmap_path") == str(expected_path)

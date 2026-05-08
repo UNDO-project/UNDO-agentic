@@ -115,6 +115,14 @@ Examples:
             "Use to capture cameras newly tagged in OSM before the TTL expires."
         ),
     )
+    parser.add_argument(
+        "--force-rerender",
+        action="store_true",
+        help=(
+            "Bypass the per-artifact visualisation cache and redraw every "
+            "requested chart/map/report. Independent of --force-refresh."
+        ),
+    )
 
     # Routing arguments
     parser.add_argument(
@@ -324,6 +332,8 @@ def main():
         config_kwargs["analyze_enabled"] = False
     if args.force_refresh:
         config_kwargs["force_refresh"] = True
+    if args.force_rerender:
+        config_kwargs["force_rerender"] = True
 
     # Toggle overrides layered on top of the preset. Each flag covers a
     # natural visualisation group; the underlying ``PipelineConfig`` fields

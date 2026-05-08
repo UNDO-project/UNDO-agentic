@@ -337,23 +337,17 @@ async def execute_pipeline_task(task_id: str, request: PipelineRequest) -> None:
 
         def _on_scrape_complete(payload: dict) -> None:
             elements_count = payload.get("elements_count")
-            will_skip = bool(payload.get("will_skip_analyzer"))
-
-            if will_skip:
-                msg = (
-                    f"Reusing prior analysis of {elements_count} cameras."
-                    if elements_count is not None
-                    else "Reusing prior analysis."
-                )
-            else:
-                msg = (
-                    f"Analyzing {elements_count} cameras…"
-                    if elements_count is not None
-                    else "Analyzing data..."
-                )
+            msg = (
+                f"Analyzing {elements_count} cameras…"
+                if elements_count is not None
+                else "Analyzing data..."
+            )
 
             task_manager.update_progress(task_id, 50, msg)
-            metadata_fields: dict = {"analysis_skipped": will_skip}
+            # ``analysis_skipped`` stays in metadata for UI back-compat but
+            # is always False now: the analyzer runs every time so the
+            # per-artifact visualisation cache can decide what to reuse.
+            metadata_fields: dict = {"analysis_skipped": False}
             if elements_count is not None:
                 metadata_fields["elements_count"] = elements_count
             task_manager.set_metadata(task_id, **metadata_fields)
@@ -363,7 +357,7 @@ async def execute_pipeline_task(task_id: str, request: PipelineRequest) -> None:
             current_stage["value"] = "analyzing"
 
             asyncio.run_coroutine_threadsafe(
-                _broadcast_analysis_starting(task_id, elements_count, will_skip),
+                _broadcast_analysis_starting(task_id, elements_count, False),
                 loop,
             )
 

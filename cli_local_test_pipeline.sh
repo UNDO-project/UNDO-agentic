@@ -55,6 +55,11 @@ pytest tests/chains/test_analysis_chain_report.py
 echo "Done..."
 echo "==============================================="
 
+echo "Running analysis chain visualization cache tests"
+pytest tests/chains/test_analysis_chain_cache.py
+echo "Done..."
+echo "==============================================="
+
 echo "Running io tools tests"
 pytest tests/tools/test_io_tools.py
 echo "Done..."

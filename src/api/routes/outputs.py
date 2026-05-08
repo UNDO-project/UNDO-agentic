@@ -124,13 +124,11 @@ async def get_city_map(city: str, map_type: str = "heatmap"):
     :return: HTML map file
     :raises HTTPException: 404 if file not found
     """
-    # Map file paths — these match what the analyzer writes today:
-    # ``<city>_heatmap.html`` (folium HTML) and
-    # ``hotspot_plot_<city>.png`` (matplotlib PNG of DBSCAN clusters).
+    # Map file paths — match the standardized ``<city>_<artifact>`` convention.
     base = resolve_city_base(city)
     map_files = {
         "heatmap": f"{city}_heatmap.html",
-        "hotspots": f"hotspot_plot_{city}.png",
+        "hotspots": f"{city}_hotspots.png",
     }
 
     if map_type not in map_files:
@@ -193,9 +191,9 @@ async def get_city_charts(city: str, chart: str):
     """
     base = resolve_city_base(city)
     if chart == "sensitivity":
-        file_path = base / f"{city}_enriched_sensitivity.png"
+        file_path = base / f"{city}_sensitivity_reasons.png"
     elif chart == "privacy":
-        file_path = base / "privacy_distribution.png"
+        file_path = base / f"{city}_privacy.png"
     else:
         raise HTTPException(
             status_code=400,
@@ -236,34 +234,52 @@ async def get_city_report(city: str):
     )
 
 
+#: Sidecar files written next to every cached visualisation artifact.
+#: These are internal to the per-artifact cache (Architecture Proposal
+#: #5) and must never reach the user-facing outputs list.
+_INTERNAL_SUFFIX = ".cache.json"
+
+
 @router.get("/{city}/list")
 async def list_city_files(city: str):
     """
     List all available files for a city.
 
+    Lists every regular file in the per-city output directory except
+    the internal ``*.cache.json`` sidecars. The directory itself is
+    already per-city (``resolve_city_base`` returns ``<base>/<city>``
+    when present), so a directory listing is safe — and necessary,
+    because some artifact filenames carry the city stem at the end
+    rather than the start (e.g. ``operator_distribution_<city>.png``)
+    and would be missed by a prefix glob.
+
     :param city: City name
     :return: JSON list of available files with metadata
     """
-    base = resolve_city_base(city)
-    city_files = []
-
-    # Scan output directory for files matching the city name. An absent
-    # base directory or no matching files returns an empty list with a
-    # 200 response — callers (frontend list view) shouldn't have to
-    # distinguish "no city" from "empty city" via HTTP status.
-    if base.exists():
-        for file_path in base.glob(f"{city.lower()}*"):
-            if file_path.is_file():
-                stat = file_path.stat()
-                city_files.append(
-                    {
-                        "name": file_path.name,
-                        "path": f"/outputs/{file_path.name}",
-                        "size_bytes": stat.st_size,
-                        "modified": stat.st_mtime,
-                        "type": get_mime_type(file_path),
-                    }
-                )
+    # ``/list`` is the only route that returns *every* file in a
+    # directory rather than a specific filename, so it must not fall
+    # back to ``OUTPUT_BASE_DIR`` when the per-city directory is
+    # missing — that would leak files from sibling cities or stray
+    # flat-layout artifacts. Specific-filename routes (``/geojson``,
+    # ``/map``, etc.) keep their fallback intact via ``resolve_city_base``.
+    city_dir = OUTPUT_BASE_DIR / city
+    city_files: list = []
+    if city_dir.exists() and city_dir.is_dir():
+        for file_path in city_dir.iterdir():
+            if not file_path.is_file():
+                continue
+            if file_path.name.endswith(_INTERNAL_SUFFIX):
+                continue
+            stat = file_path.stat()
+            city_files.append(
+                {
+                    "name": file_path.name,
+                    "path": f"/outputs/{file_path.name}",
+                    "size_bytes": stat.st_size,
+                    "modified": stat.st_mtime,
+                    "type": get_mime_type(file_path),
+                }
+            )
 
     return JSONResponse(
         content={

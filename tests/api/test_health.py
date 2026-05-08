@@ -42,7 +42,7 @@ def test_version_endpoint_response_structure():
     assert "version" in data
     assert "api_version" in data
     assert "description" in data
-    assert data["version"] == "1.0.0"
+    assert data["version"] == "2.3.0"
     assert data["api_version"] == "v1"
 
 

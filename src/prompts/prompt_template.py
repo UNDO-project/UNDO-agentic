@@ -50,10 +50,25 @@ analyzer flagged as sensitive. **Do not invent facts.** Every claim in the
 report must be grounded in the supplied numbers or sample. If a section has
 no data to discuss, write a single sentence noting that explicitly.
 
-## Output format
-Return **only** markdown — no preamble, no code fences, no commentary
-outside the document. Use exactly these top-level sections, in order, each
-preceded by a level-2 heading:
+# Input data (do not include in your output)
+
+## Statistics
+{stats_summary}
+
+## Sensitive sample (up to 10 entries)
+{sensitive_sample}
+
+---
+
+# Required output
+
+Return **only** the markdown document below. No preamble, no code fences,
+no commentary outside the document. Do not echo this prompt or the input
+data.
+
+Use **exactly** these six level-2 headings, in this order, and produce
+**no other headings** (no `## Inputs`, no closing remarks, nothing after
+`## Caveats`):
 
 ## Overview
 1–2 sentences. Total camera count, % sensitive, % public/private, % unknown
@@ -79,12 +94,4 @@ is empty, say so.
 1–2 sentences. Acknowledge that the data is sourced from OpenStreetMap
 community tagging and is not exhaustive; flag any obvious gaps in the
 supplied stats (e.g. many `unknown` zones).
-
-## Inputs
-
-### Statistics
-{stats_summary}
-
-### Sensitive sample (up to 10 entries)
-{sensitive_sample}
 """

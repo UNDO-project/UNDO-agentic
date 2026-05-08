@@ -2,14 +2,10 @@
 Tests for file-serving endpoints.
 
 These tests pin the ``/api/v1/outputs/*`` route surface against the
-filenames the analyzer actually writes today
-(``<city>_heatmap.html``, ``hotspot_plot_<city>.png``,
-``hotspots_<city>.geojson``, ``privacy_distribution.png``,
-``<city>_enriched_sensitivity.png``, and the per-route files under
-``routes/route_<hash>.{html,geojson}``). The fixture city is
-lowercase to match the production filename casing produced by
-``SurveillanceDataCollector.scrape`` (which lowercases user input
-when building paths).
+standardized ``<city>_<artifact>.<ext>`` filename convention adopted.
+The fixture city is lowercase to match the production
+filename casing produced by ``SurveillanceDataCollector.scrape``
+(which lowercases user input when building paths).
 """
 
 import json
@@ -39,13 +35,16 @@ PNG_BYTES = bytes.fromhex(
 @pytest.fixture
 def mock_output_files(tmp_path, monkeypatch):
     """
-    Create mock output files matching the analyzer's actual filenames.
+    Create mock output files matching the analyzer's actual filenames
+    and per-city directory layout (``overpass_data/<city>/``).
 
     :param tmp_path: pytest temporary directory fixture
     :param monkeypatch: pytest monkeypatch fixture
-    :return: Path to mock output directory
+    :return: Path to mock per-city output directory
     """
-    output_dir = tmp_path / "overpass_data"
+    base_dir = tmp_path / "overpass_data"
+    base_dir.mkdir()
+    output_dir = base_dir / TEST_CITY
     output_dir.mkdir()
 
     # Enriched + raw GeoJSON
@@ -58,11 +57,11 @@ def mock_output_files(tmp_path, monkeypatch):
 
     # Maps (heatmap HTML, hotspots PNG)
     (output_dir / f"{TEST_CITY}_heatmap.html").write_text("<html>Heatmap</html>")
-    (output_dir / f"hotspot_plot_{TEST_CITY}.png").write_bytes(PNG_BYTES)
+    (output_dir / f"{TEST_CITY}_hotspots.png").write_bytes(PNG_BYTES)
 
-    # Charts: privacy + sensitivity (separate filename conventions)
-    (output_dir / "privacy_distribution.png").write_bytes(PNG_BYTES)
-    (output_dir / f"{TEST_CITY}_enriched_sensitivity.png").write_bytes(PNG_BYTES)
+    # Charts: privacy + sensitivity reasons
+    (output_dir / f"{TEST_CITY}_privacy.png").write_bytes(PNG_BYTES)
+    (output_dir / f"{TEST_CITY}_sensitivity_reasons.png").write_bytes(PNG_BYTES)
 
     # Per-route files live under routes/. Mirror the production layout.
     routes_dir = output_dir / "routes"
@@ -72,14 +71,14 @@ def mock_output_files(tmp_path, monkeypatch):
         json.dumps({"type": "Feature", "geometry": {}, "properties": {}})
     )
 
-    # LLM-generated city report (Architecture Proposal #2)
+    # LLM-generated city report
     (output_dir / f"{TEST_CITY}_report.md").write_text(
         "## Overview\nstubbed report.\n", encoding="utf-8"
     )
 
     from src.api.routes import outputs
 
-    monkeypatch.setattr(outputs, "OUTPUT_BASE_DIR", output_dir)
+    monkeypatch.setattr(outputs, "OUTPUT_BASE_DIR", base_dir)
 
     return output_dir
 
@@ -122,7 +121,7 @@ def test_get_city_map_heatmap(mock_output_files):
 
 
 def test_get_city_map_hotspots(mock_output_files):
-    """Hotspots endpoint serves ``hotspot_plot_<city>.png`` as image/png."""
+    """Hotspots endpoint serves ``<city>_hotspots.png`` as image/png."""
     response = client.get(f"/api/v1/outputs/{TEST_CITY}/map?map_type=hotspots")
 
     assert response.status_code == 200
@@ -173,7 +172,7 @@ def test_get_city_route_invalid_filetype(mock_output_files):
 
 
 def test_get_city_charts_privacy(mock_output_files):
-    """Privacy chart serves the shared ``privacy_distribution.png``."""
+    """Privacy chart serves ``<city>_privacy.png``."""
     response = client.get(f"/api/v1/outputs/{TEST_CITY}/charts?chart=privacy")
 
     assert response.status_code == 200
@@ -232,6 +231,65 @@ def test_list_city_files(mock_output_files):
         assert "size_bytes" in file_info
         assert "modified" in file_info
         assert "type" in file_info
+
+
+def test_list_city_files_excludes_cache_sidecars(tmp_path, monkeypatch):
+    """
+    ``*.cache.json`` sidecars written by the per-artifact
+    visualisation cache must never appear in the user-facing list,
+    even though they live in the same per-city directory.
+    """
+    base_dir = tmp_path / "overpass_data"
+    output_dir = base_dir / TEST_CITY
+    output_dir.mkdir(parents=True)
+    (output_dir / f"{TEST_CITY}_heatmap.html").write_text("<html/>")
+    (output_dir / f"{TEST_CITY}_heatmap.html.cache.json").write_text(
+        '{"key": "deadbeef", "ts": "2026-05-08T00:00:00Z"}'
+    )
+    (output_dir / f"{TEST_CITY}_report.md").write_text("## Overview\n")
+    (output_dir / f"{TEST_CITY}_report.md.cache.json").write_text(
+        '{"key": "cafe", "ts": "2026-05-08T00:00:00Z"}'
+    )
+
+    from src.api.routes import outputs
+
+    monkeypatch.setattr(outputs, "OUTPUT_BASE_DIR", base_dir)
+
+    response = client.get(f"/api/v1/outputs/{TEST_CITY}/list")
+    assert response.status_code == 200
+    names = {f["name"] for f in response.json()["files"]}
+
+    assert f"{TEST_CITY}_heatmap.html" in names
+    assert f"{TEST_CITY}_report.md" in names
+    assert not any(name.endswith(".cache.json") for name in names), (
+        "Sidecar files leaked into the user-facing outputs list"
+    )
+
+
+def test_list_city_files_includes_distribution_charts(tmp_path, monkeypatch):
+    """
+    Every distribution chart adopts the standardized
+    ``<city>_<artifact>.png`` convention and must appear in ``/list``
+    so the dashboard's ``findFile`` lookup can discover them.
+    """
+    base_dir = tmp_path / "overpass_data"
+    output_dir = base_dir / TEST_CITY
+    output_dir.mkdir(parents=True)
+    (output_dir / f"{TEST_CITY}_operator_distribution.png").write_bytes(PNG_BYTES)
+    (output_dir / f"{TEST_CITY}_manufacturer_distribution.png").write_bytes(PNG_BYTES)
+    (output_dir / f"{TEST_CITY}_install_timeline.png").write_bytes(PNG_BYTES)
+
+    from src.api.routes import outputs
+
+    monkeypatch.setattr(outputs, "OUTPUT_BASE_DIR", base_dir)
+
+    response = client.get(f"/api/v1/outputs/{TEST_CITY}/list")
+    assert response.status_code == 200
+    names = {f["name"] for f in response.json()["files"]}
+
+    assert f"{TEST_CITY}_operator_distribution.png" in names
+    assert f"{TEST_CITY}_manufacturer_distribution.png" in names
+    assert f"{TEST_CITY}_install_timeline.png" in names
 
 
 def test_list_city_files_no_files():

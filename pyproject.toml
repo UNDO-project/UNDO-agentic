@@ -1,7 +1,7 @@
 [project]
 name = "agentic-counter-surveillance"
-version = "1.0.0"
-description = "A software based on agentic architecture"
+version = "2.3.0"
+description = "Multi-agent pipeline that scrapes OpenStreetMap surveillance-camera data, enriches it with a local LLM, renders maps and charts, generates an LLM-written city report, and computes low-surveillance walking routes."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

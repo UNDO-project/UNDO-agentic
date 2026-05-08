@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Dict, Any, Union
+from typing import Dict, Any, Optional, Union
 from collections import Counter
 
 import matplotlib
@@ -12,12 +12,22 @@ import geopandas as gpd
 import contextily as cx
 from shapely import Point
 
+from src.config.logger import logger
 
-def private_public_pie(stats: Dict[str, Any], output_dir: Path) -> Path:
+
+def private_public_pie(
+    stats: Dict[str, Any],
+    output_dir: Path,
+    filename: str = "privacy_distribution.png",
+) -> Path:
     """
     Build a pie / donut chart showing public vs private vs unknown cameras.
+
     :param stats: Summary-stats dict coming from `compute_statistics`
     :param output_dir: Directory to save the chart
+    :param filename: Output filename. The chain passes
+        ``<city>_privacy.png`` to namespace per-city artifacts; default
+        kept short for ad-hoc invocations.
     :return: A Path to the png file
     """
 
@@ -41,7 +51,7 @@ def private_public_pie(stats: Dict[str, Any], output_dir: Path) -> Path:
     ax.set(aspect="equal", title="Camera Privacy Distribution")
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    chart_path = output_dir / "privacy_distribution.png"
+    chart_path = output_dir / filename
     fig.savefig(chart_path, bbox_inches="tight")
     plt.close(fig)
 
@@ -150,27 +160,28 @@ def _plot_top_n_bar(
     title: str,
     xlabel: str,
     top_n: int,
-) -> Path:
+) -> Optional[Path]:
     """
     Render a horizontal bar chart of the top-N most common entries from
     ``counts``, bucketing the remainder as ``"other"``.
 
-    Empty input yields a single-bar ``"(no data)"`` placeholder so a
-    user-toggled chart still produces an observable artifact rather than
-    a missing file. Shared backbone for the operator and manufacturer
-    distribution charts.
+    Returns ``None`` when ``counts`` is empty — no PNG is written, so
+    the dashboard sees an absent file and surfaces a captioned empty
+    state instead of a degenerate ``(no data)`` bar.
+
+    Shared backbone for the operator and manufacturer distribution charts.
     """
     if not counts:
-        labels = ["(no data)"]
-        values = [0]
-    else:
-        top = counts.most_common(top_n)
-        labels = [str(label) for label, _ in top]
-        values = [int(v) for _, v in top]
-        other_total = sum(counts.values()) - sum(values)
-        if other_total > 0:
-            labels.append("other")
-            values.append(int(other_total))
+        logger.info(f"Skipping {out_path.name}: counter is empty")
+        return None
+
+    top = counts.most_common(top_n)
+    labels = [str(label) for label, _ in top]
+    values = [int(v) for _, v in top]
+    other_total = sum(counts.values()) - sum(values)
+    if other_total > 0:
+        labels.append("other")
+        values.append(int(other_total))
 
     fig, ax = plt.subplots(figsize=(8, max(4, len(labels) * 0.5)))
     y = list(range(len(labels)))
@@ -193,9 +204,13 @@ def plot_operator_distribution(
     output_dir: Path,
     top_n: int = 10,
     filename: str = "operator_distribution.png",
-) -> Path:
+) -> Optional[Path]:
     """
     Build and save a horizontal bar chart of camera count per operator.
+
+    Returns ``None`` (and writes no file) when ``operator_counts`` is
+    empty so the dashboard can render a captioned empty state
+    rather than a degenerate placeholder.
 
     :param stats: Summary-stats dict from ``compute_statistics``.
     :param output_dir: Directory to save the chart.
@@ -203,7 +218,7 @@ def plot_operator_distribution(
     :param filename: Output filename. Callers pass ``operator_distribution_<city>.png``
         to namespace per-city artifacts; default kept short for
         ad-hoc invocations.
-    :return: Path to the written PNG.
+    :return: Path to the written PNG, or ``None`` when nothing to plot.
     """
     counts: Counter = stats.get("operator_counts") or Counter()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -220,7 +235,7 @@ def plot_install_timeline(
     stats: Dict[str, Any],
     output_dir: Path,
     filename: str = "install_timeline.png",
-) -> Path:
+) -> Optional[Path]:
     """
     Build and save a bar chart of camera count by install year.
 
@@ -229,12 +244,15 @@ def plot_install_timeline(
     tagging is always visible at a glance. Numeric years follow,
     sorted ascending.
 
+    Returns ``None`` (and writes no file) when ``start_year_counts``
+    is empty.
+
     :param stats: Summary-stats dict from ``compute_statistics``.
         Must carry ``start_year_counts``.
     :param output_dir: Directory to save the chart.
     :param filename: Output filename. Callers pass
         ``install_timeline_<city>.png`` to namespace per-city artifacts.
-    :return: Path to the written PNG.
+    :return: Path to the written PNG, or ``None`` when nothing to plot.
     """
     counts: Counter = stats.get("start_year_counts") or Counter()
 
@@ -253,8 +271,8 @@ def plot_install_timeline(
     values.extend(v for _, v in year_items)
 
     if not labels:
-        labels = ["(no data)"]
-        values = [0]
+        logger.info(f"Skipping {filename}: no install-year data")
+        return None
 
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.bar(labels, values)
@@ -277,13 +295,13 @@ def plot_manufacturer_distribution(
     output_dir: Path,
     top_n: int = 10,
     filename: str = "manufacturer_distribution.png",
-) -> Path:
+) -> Optional[Path]:
     """
     Build and save a horizontal bar chart of camera count per manufacturer.
 
-    Mirrors :func:`plot_operator_distribution`. ``manufacturer`` is sparsely
-    tagged in OSM today, so the ``"(no data)"`` placeholder path is the
-    common case for many cities.
+    Mirrors :func:`plot_operator_distribution`. ``manufacturer`` is
+    sparsely tagged in OSM today, so the ``None`` (no-file) path is
+    the common case for many cities.
     """
     counts: Counter = stats.get("manufacturer_counts") or Counter()
     output_dir.mkdir(parents=True, exist_ok=True)

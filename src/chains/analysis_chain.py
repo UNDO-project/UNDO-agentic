@@ -315,7 +315,13 @@ class AnalysisChain:
         is appended to ``errors`` (matching the legacy log format
         ``"<error_label> failed: <e>"``) and ``None`` is returned.
 
-        :return: The artifact path on success/cache-hit; ``None`` on failure.
+        ``fn`` returning ``None`` or ``False`` is interpreted as a
+        deliberate opt-out (e.g. an empty-counter chart). No sidecar is
+        written and ``None`` is returned, so the chain context never
+        records a path to a file that doesn't exist.
+
+        :return: The artifact path on success/cache-hit; ``None`` on
+            failure or opt-out.
         """
         from src.tools.io_tools import cache_hit, write_sidecar
 
@@ -323,11 +329,14 @@ class AnalysisChain:
             logger.info(f"Reusing cached {vis_name} at {artifact_path}")
             return artifact_path
         try:
-            fn()
+            result = fn()
         except Exception as e:
             error_msg = f"{error_label} failed: {e}"
             logger.error(error_msg)
             errors.append(error_msg)
+            return None
+        if result is None or result is False:
+            logger.info(f"{vis_name}: nothing to render — skipping artifact")
             return None
         write_sidecar(artifact_path, cache_key)
         logger.info(f"Generated {vis_name} at {artifact_path}")
@@ -367,10 +376,14 @@ class AnalysisChain:
         force_rerender = bool(options.get("force_rerender", False))
         raw_hash = str(context.get("raw_hash") or "")
 
-        # Generate heatmap
+        # Generate heatmap. The filename derives from the city stem
+        # (``<city>_heatmap.html``), not from the geojson path's
+        # suffix — the ``/api/v1/outputs/{city}/map?map_type=heatmap``
+        # route serves that exact name.
         if options.get("generate_heatmap"):
             geojson_path = Path(context["geojson_path"])
-            heatmap_path = geojson_path.with_suffix(".html")
+            raw_path = Path(context["path"])
+            heatmap_path = raw_path.with_name(f"{raw_path.stem}_heatmap.html")
             out = self._cached_step(
                 vis_name="heatmap",
                 error_label="Heatmap generation",
@@ -383,12 +396,13 @@ class AnalysisChain:
             if out is not None:
                 context["heatmap_path"] = str(out)
 
-        # Generate hotspots GeoJSON
+        # Generate hotspots GeoJSON. Filename uses the raw city stem
+        # ( ``<city>_hotspots.geojson``), not the geojson path's
+        # ``_enriched_hotspots`` infix.
         if options.get("generate_hotspots"):
             geojson_path = Path(context["geojson_path"])
-            hotspots_path = geojson_path.with_name(
-                f"{geojson_path.stem}_hotspots.geojson"
-            )
+            raw_path = Path(context["path"])
+            hotspots_path = raw_path.with_name(f"{raw_path.stem}_hotspots.geojson")
             out = self._cached_step(
                 vis_name="hotspots",
                 error_label="Hotspots generation",
@@ -412,22 +426,26 @@ class AnalysisChain:
                 logger.error(error_msg)
                 errors.append(error_msg)
 
-        # Generate charts (only if stats available)
+        # Generate charts (only if stats available). Every artifact is
+        # named ``<city>_<artifact>.<ext>`` so a single naming
+        # convention covers heatmap, hotspots, every chart, and the
+        # report — making the ``/list`` glob and the dashboard's
+        # ``findFile`` substring lookups predictable.
         if "stats" in context:
             output_dir = Path(context["path"]).parent
-            # Per-city stems on the distribution + timeline charts so a
-            # casually-downloaded PNG is self-identifying without depending
-            # on the directory name.
             city_stem = Path(context["path"]).stem
 
             if options.get("generate_chart"):
-                pie_path = output_dir / "privacy_distribution.png"
+                pie_filename = f"{city_stem}_privacy.png"
+                pie_path = output_dir / pie_filename
                 out = self._cached_step(
                     vis_name="pie chart",
                     error_label="Pie chart generation",
                     artifact_path=pie_path,
                     cache_key=visualization_cache_key(raw_hash, "pie_chart", {}),
-                    fn=lambda: private_public_pie(context["stats"], output_dir),
+                    fn=lambda: private_public_pie(
+                        context["stats"], output_dir, filename=pie_filename
+                    ),
                     errors=errors,
                     force_rerender=force_rerender,
                 )
@@ -435,7 +453,8 @@ class AnalysisChain:
                     context["pie_chart_path"] = str(out)
 
             if options.get("plot_zone_sensitivity"):
-                zone_path = output_dir / "zone_sensitivity.png"
+                zone_filename = f"{city_stem}_zone_sensitivity.png"
+                zone_path = output_dir / zone_filename
                 out = self._cached_step(
                     vis_name="zone sensitivity chart",
                     error_label="Zone sensitivity chart",
@@ -443,7 +462,9 @@ class AnalysisChain:
                     cache_key=visualization_cache_key(
                         raw_hash, "zone_sensitivity", {"top_n": 10}
                     ),
-                    fn=lambda: plot_zone_sensitivity(context["stats"], output_dir),
+                    fn=lambda: plot_zone_sensitivity(
+                        context["stats"], output_dir, filename=zone_filename
+                    ),
                     errors=errors,
                     force_rerender=force_rerender,
                 )
@@ -452,9 +473,7 @@ class AnalysisChain:
 
             if options.get("plot_sensitivity_reasons"):
                 enriched_path = Path(context["enriched_path"])
-                reasons_path = enriched_path.with_name(
-                    f"{enriched_path.stem}_sensitivity.png"
-                )
+                reasons_path = output_dir / f"{city_stem}_sensitivity_reasons.png"
                 out = self._cached_step(
                     vis_name="sensitivity reasons chart",
                     error_label="Sensitivity reasons chart",
@@ -471,7 +490,7 @@ class AnalysisChain:
 
             if options.get("plot_hotspots") and "hotspots_path" in context:
                 hotspots_path = Path(context["hotspots_path"])
-                hotspots_chart_path = hotspots_path.with_suffix(".png")
+                hotspots_chart_path = output_dir / f"{city_stem}_hotspots.png"
                 out = self._cached_step(
                     vis_name="hotspots chart",
                     error_label="Hotspots chart",
@@ -485,7 +504,7 @@ class AnalysisChain:
                     context["hotspots_chart"] = str(out)
 
             if options.get("plot_operator_distribution"):
-                op_filename = f"operator_distribution_{city_stem}.png"
+                op_filename = f"{city_stem}_operator_distribution.png"
                 op_path = output_dir / op_filename
                 out = self._cached_step(
                     vis_name="operator distribution chart",
@@ -504,7 +523,7 @@ class AnalysisChain:
                     context["operator_chart_path"] = str(out)
 
             if options.get("plot_manufacturer_distribution"):
-                mf_filename = f"manufacturer_distribution_{city_stem}.png"
+                mf_filename = f"{city_stem}_manufacturer_distribution.png"
                 mf_path = output_dir / mf_filename
                 out = self._cached_step(
                     vis_name="manufacturer distribution chart",
@@ -523,7 +542,7 @@ class AnalysisChain:
                     context["manufacturer_chart_path"] = str(out)
 
             if options.get("plot_install_timeline"):
-                tl_filename = f"install_timeline_{city_stem}.png"
+                tl_filename = f"{city_stem}_install_timeline.png"
                 tl_path = output_dir / tl_filename
                 out = self._cached_step(
                     vis_name="install timeline chart",
@@ -546,7 +565,7 @@ class AnalysisChain:
                 raw_path = Path(context["path"])
                 report_path = raw_path.with_name(f"{raw_path.stem}_report.md")
 
-                def _generate_report() -> None:
+                def _generate_report() -> Path:
                     sample = [
                         el
                         for el in context.get("enriched", [])
@@ -556,6 +575,9 @@ class AnalysisChain:
                     ]
                     markdown = self.llm.generate_city_report(context["stats"], sample)
                     report_path.write_text(markdown, encoding="utf-8")
+                    # Truthy return so ``_cached_step`` doesn't treat the
+                    # implicit ``None`` as an opt-out.
+                    return report_path
 
                 out = self._cached_step(
                     vis_name="city report",

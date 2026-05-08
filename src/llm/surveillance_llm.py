@@ -15,7 +15,7 @@ from tenacity import (
 from src.config.logger import logger
 from src.config.models.surveillance_metadata import SurveillanceMetadata
 from src.config.settings import LangChainSettings
-from src.prompts.prompt_template import PROMPT_v1
+from src.prompts.prompt_template import PROMPT_v1, REPORT_PROMPT_v1
 
 
 class SurveillanceLLM:
@@ -192,6 +192,110 @@ class SurveillanceLLM:
                 out.append({"error": str(e)})
         return out
 
+    def generate_city_report(
+        self,
+        stats: Dict[str, Any],
+        sample: list,
+    ) -> str:
+        """
+        Generate a fixed-section markdown city report from the
+        analyzer's summary stats and a small sample of sensitive
+        cameras.
+
+        Sections (enforced by the prompt): ``Overview``, ``Operators``,
+        ``Privacy mix``, ``Sensitivity``, ``Hotspots``, ``Caveats``.
+
+        :param stats: The dict returned by ``compute_statistics``.
+            ``Counter`` values are normalised to plain ``dict``\\ s
+            for the prompt.
+        :param sample: List of enriched camera dicts (each with
+            ``analysis``) for cameras flagged sensitive. The method
+            extracts the relevant fields and truncates to 10 entries.
+        :return: Markdown report as a single string.
+        :raise: ``RuntimeError`` if the LLM call fails. Callers should
+            wrap this in a try/except so a report failure does not
+            abort the analyzer run.
+        """
+        stats_summary = self._summarize_stats_for_report(stats)
+        sample_block = self._format_sensitive_sample(sample)
+
+        prompt_template = PromptTemplate(
+            input_variables=["stats_summary", "sensitive_sample"],
+            template=REPORT_PROMPT_v1,
+        )
+        chain = prompt_template | self.llm
+
+        logger.info("Generating city report via LLM")
+        try:
+            result = chain.invoke(
+                {"stats_summary": stats_summary, "sensitive_sample": sample_block}
+            )
+        except Exception as e:
+            logger.error(f"City report generation failed: {e}")
+            raise RuntimeError(f"City report generation failed: {e}") from e
+
+        return str(result).strip()
+
+    @staticmethod
+    def _summarize_stats_for_report(stats: Dict[str, Any]) -> str:
+        """
+        Render a compact, prompt-friendly summary of the stats dict.
+
+        ``Counter`` values are emitted as ``most_common(top_n)`` lists
+        so the LLM has the same prioritised view the charts use.
+        """
+
+        def _top(counter_like: Any, n: int = 5) -> list:
+            if not counter_like:
+                return []
+            if hasattr(counter_like, "most_common"):
+                return list(counter_like.most_common(n))
+            # Plain dict fallback (post-JSON round-trip)
+            items = sorted(counter_like.items(), key=lambda kv: kv[1], reverse=True)
+            return items[:n]
+
+        total = stats.get("total", 0)
+        sensitive = stats.get("sensitive_count", 0)
+        public = stats.get("public_count", 0)
+        private = stats.get("private_count", 0)
+        unknown_privacy = max(total - public - private, 0)
+
+        lines = [
+            f"- total_cameras: {total}",
+            f"- sensitive: {sensitive}",
+            f"- public: {public}",
+            f"- private: {private}",
+            f"- unknown_privacy: {unknown_privacy}",
+            f"- top_operators: {_top(stats.get('operator_counts'))}",
+            f"- top_camera_types: {_top(stats.get('camera_type_counts'))}",
+            f"- top_zones: {_top(stats.get('zone_counts'))}",
+            f"- top_zones_by_sensitive: {_top(stats.get('zone_sensitivity_counts'))}",
+        ]
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_sensitive_sample(sample: list, limit: int = 10) -> str:
+        """
+        Render up to ``limit`` sensitive cameras as compact bullet lines.
+
+        Pulls ``operator``, ``zone``, and ``sensitive_reason`` from each
+        element's ``analysis`` dict. Elements without those fields are
+        skipped silently. Returns ``"(none)"`` if the sample is empty
+        so the prompt's "explicit no data" path is exercised.
+        """
+        rows = []
+        for el in sample:
+            if len(rows) >= limit:
+                break
+            analysis = el.get("analysis", {}) if isinstance(el, dict) else {}
+            if not isinstance(analysis, dict) or not analysis.get("sensitive"):
+                continue
+            op = analysis.get("operator") or "—"
+            zone = analysis.get("zone") or "—"
+            reason = analysis.get("sensitive_reason") or "—"
+            rows.append(f"- operator={op}, zone={zone}, reason={reason}")
+        return "\n".join(rows) if rows else "(none)"
+
     def generate_response(self, prompt: str, **kwargs: Any) -> str:
         """
         Generate a response from the LLM (backward compatibility method).
@@ -286,6 +390,33 @@ def create_surveillance_llm(
     except Exception as e:
         logger.error(f"Failed to create SurveillanceLLM: {e}")
         raise
+
+
+def check_ollama_reachable(settings: Optional[LangChainSettings] = None) -> None:
+    """
+    Probe the Ollama server so the pipeline fails fast when the daemon
+    isn't running, instead of silently producing 0/N enriched cameras
+    via per-element ``Connection refused`` warnings.
+
+    Hits Ollama's ``/api/tags`` endpoint (cheap, doesn't load a model)
+    with a short timeout. Returns ``None`` on success; raises
+    ``RuntimeError`` with a user-actionable message otherwise.
+
+    :param settings: LangChain settings. Defaults are loaded from .env.
+    :raises RuntimeError: If the server is unreachable or returns non-2xx.
+    """
+    import requests
+
+    s = settings or LangChainSettings()
+    url = f"{s.ollama_base_url.rstrip('/')}/api/tags"
+    try:
+        requests.get(url, timeout=3).raise_for_status()
+    except requests.exceptions.RequestException as e:
+        raise RuntimeError(
+            f"Ollama is not reachable at {s.ollama_base_url} "
+            f"(error: {e}). Start it with `ollama serve` and ensure model "
+            f"`{s.ollama_model}` is pulled."
+        ) from e
 
 
 # Backward compatibility alias

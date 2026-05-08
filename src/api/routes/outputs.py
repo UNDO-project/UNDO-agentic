@@ -77,6 +77,7 @@ def get_mime_type(file_path: Path) -> str:
         ".json": "application/json",
         ".geojson": "application/geo+json",
         ".html": "text/html",
+        ".md": "text/markdown",
         ".png": "image/png",
         ".jpg": "image/jpeg",
         ".jpeg": "image/jpeg",
@@ -123,11 +124,13 @@ async def get_city_map(city: str, map_type: str = "heatmap"):
     :return: HTML map file
     :raises HTTPException: 404 if file not found
     """
-    # Map file paths
+    # Map file paths — these match what the analyzer writes today:
+    # ``<city>_heatmap.html`` (folium HTML) and
+    # ``hotspot_plot_<city>.png`` (matplotlib PNG of DBSCAN clusters).
     base = resolve_city_base(city)
     map_files = {
-        "heatmap": f"{city}_enriched.html",
-        "hotspots": f"{city}_enriched_hotspots.png",
+        "heatmap": f"{city}_heatmap.html",
+        "hotspots": f"hotspot_plot_{city}.png",
     }
 
     if map_type not in map_files:
@@ -141,7 +144,7 @@ async def get_city_map(city: str, map_type: str = "heatmap"):
 
     return FileResponse(
         path=file_path,
-        media_type="text/html",
+        media_type=get_mime_type(file_path),
         headers={"Content-Disposition": f"inline; filename={file_path.name}"},
     )
 
@@ -208,6 +211,31 @@ async def get_city_charts(city: str, chart: str):
     )
 
 
+@router.get("/{city}/report")
+async def get_city_report(city: str):
+    """
+    Get the LLM-generated markdown city report.
+
+    Served as ``text/markdown`` so the frontend (or curl) can render or
+    download it directly. Looks for ``<city>_report.md`` in the city's
+    output directory; returns 404 when the report wasn't generated for
+    this run.
+
+    :param city: City name
+    :return: Markdown file
+    :raises HTTPException: 404 if the report file does not exist
+    """
+    base = resolve_city_base(city)
+    file_path = base / f"{city}_report.md"
+    validate_path(file_path)
+
+    return FileResponse(
+        path=file_path,
+        media_type="text/markdown",
+        filename=file_path.name,
+    )
+
+
 @router.get("/{city}/list")
 async def list_city_files(city: str):
     """
@@ -219,25 +247,23 @@ async def list_city_files(city: str):
     base = resolve_city_base(city)
     city_files = []
 
-    # Scan output directory for files matching the city name
-    if not base.exists():
-        return JSONResponse(content={"city": city, "files": []})
-
-    for file_path in base.glob(f"{city.lower()}*"):
-        if file_path.is_file():
-            stat = file_path.stat()
-            city_files.append(
-                {
-                    "name": file_path.name,
-                    "path": f"/outputs/{file_path.name}",
-                    "size_bytes": stat.st_size,
-                    "modified": stat.st_mtime,
-                    "type": get_mime_type(file_path),
-                }
-            )
-
-    if not city_files:
-        raise HTTPException(status_code=404, detail=f"No files found for city: {city}")
+    # Scan output directory for files matching the city name. An absent
+    # base directory or no matching files returns an empty list with a
+    # 200 response — callers (frontend list view) shouldn't have to
+    # distinguish "no city" from "empty city" via HTTP status.
+    if base.exists():
+        for file_path in base.glob(f"{city.lower()}*"):
+            if file_path.is_file():
+                stat = file_path.stat()
+                city_files.append(
+                    {
+                        "name": file_path.name,
+                        "path": f"/outputs/{file_path.name}",
+                        "size_bytes": stat.st_size,
+                        "modified": stat.st_mtime,
+                        "type": get_mime_type(file_path),
+                    }
+                )
 
     return JSONResponse(
         content={

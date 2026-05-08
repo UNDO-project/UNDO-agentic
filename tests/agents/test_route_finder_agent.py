@@ -8,7 +8,12 @@ import networkx as nx
 import pytest
 
 from src.agents.route_finder_agent import RouteFinderAgent
-from src.config.models.route_models import RouteMetrics, RouteRequest, RouteResult
+from src.config.models.route_models import (
+    CameraFilter,
+    RouteMetrics,
+    RouteRequest,
+    RouteResult,
+)
 from src.config.settings import RouteSettings
 
 
@@ -344,3 +349,134 @@ def test_achieve_goal_stores_in_cache(
     # Verify metrics JSON can be parsed
     metrics_json = json.loads(parts[3])
     assert "length_m" in metrics_json
+
+
+# Tests for camera filter integration
+
+
+def _request_with_filter(base, camera_filter):
+    """Build a RouteRequest mirroring ``base`` but with ``camera_filter``."""
+    return RouteRequest(
+        city=base.city,
+        country=base.country,
+        start_lat=base.start_lat,
+        start_lon=base.start_lon,
+        end_lat=base.end_lat,
+        end_lon=base.end_lon,
+        data_path=base.data_path,
+        camera_filter=camera_filter,
+    )
+
+
+def test_perceive_no_filter_keeps_legacy_cache_key(
+    mem_fake, route_settings, route_request
+):
+    """Acceptance criterion: default behaviour (no filter) shares the cache
+    slot with pre-Issue-#6 entries. The cache key for ``camera_filter=None``
+    and an inert filter must match."""
+    agent = RouteFinderAgent(
+        name="test_agent", memory=mem_fake, settings=route_settings
+    )
+    key_none = agent.perceive(route_request)["cache_key"]
+    key_inert = agent.perceive(_request_with_filter(route_request, CameraFilter()))[
+        "cache_key"
+    ]
+    assert key_none == key_inert
+
+
+def test_perceive_active_filter_changes_cache_key(
+    mem_fake, route_settings, route_request
+):
+    """Different filters must hash to different cache slots so they don't
+    collide."""
+    agent = RouteFinderAgent(
+        name="test_agent", memory=mem_fake, settings=route_settings
+    )
+    baseline = agent.perceive(route_request)["cache_key"]
+    sensitive = agent.perceive(
+        _request_with_filter(route_request, CameraFilter(sensitive_only=True))
+    )["cache_key"]
+    police = agent.perceive(
+        _request_with_filter(route_request, CameraFilter(operators=["police"]))
+    )["cache_key"]
+    assert baseline != sensitive != police
+    assert baseline != police
+
+
+def test_perceive_carries_camera_filter_into_observation(
+    mem_fake, route_settings, route_request
+):
+    """The filter must travel into the act() context so ``load_cameras``
+    can read it."""
+    agent = RouteFinderAgent(
+        name="test_agent", memory=mem_fake, settings=route_settings
+    )
+    cf = CameraFilter(sensitive_only=True)
+    observation = agent.perceive(_request_with_filter(route_request, cf))
+    assert observation["camera_filter"] is cf
+
+
+def test_act_load_cameras_forwards_filter(
+    mem_fake, route_settings, mock_tools, route_request, tmp_path
+):
+    """When the context carries an active filter, load_cameras receives
+    it as the ``camera_filter`` keyword."""
+    cameras_path = route_request.data_path
+    # Drop a sensitive-camera-only fixture into place; the existing
+    # mock_tools["load_cameras"] is a MagicMock so we just inspect the
+    # arguments it was called with.
+    agent = RouteFinderAgent(
+        name="test_agent",
+        memory=mem_fake,
+        settings=route_settings,
+        tools=mock_tools,
+    )
+    cf = CameraFilter(operators=["police"])
+    context = {"cameras_geojson_path": cameras_path, "camera_filter": cf}
+    agent.act("load_cameras", context)
+
+    mock_tools["load_cameras"].assert_called_once_with(cameras_path, camera_filter=cf)
+    # The unfiltered total denominator must also be captured.
+    assert context["camera_count_total"] == 1  # route_request fixture has one feature
+
+
+def test_act_load_cameras_omits_filter_kwarg_when_none(
+    mem_fake, route_settings, mock_tools, route_request
+):
+    """Backward-compat: with no filter we call load_cameras(path) — the
+    one-arg signature matches the legacy contract for any tool override
+    a test passed in pre-Issue-#6."""
+    agent = RouteFinderAgent(
+        name="test_agent",
+        memory=mem_fake,
+        settings=route_settings,
+        tools=mock_tools,
+    )
+    context = {
+        "cameras_geojson_path": route_request.data_path,
+        "camera_filter": None,
+    }
+    agent.act("load_cameras", context)
+    mock_tools["load_cameras"].assert_called_once_with(route_request.data_path)
+
+
+def test_score_paths_propagates_camera_count_total(
+    mem_fake, route_settings, mock_tools
+):
+    """``score_paths`` must stamp the unfiltered total onto best_metrics
+    so the orchestrator can surface it on the routing response."""
+    agent = RouteFinderAgent(
+        name="test_agent",
+        memory=mem_fake,
+        settings=route_settings,
+        tools=mock_tools,
+    )
+    G = mock_tools["build_graph"].return_value
+    context = {
+        "graph": G,
+        "cameras": [(52.52, 13.40)],
+        "candidate_paths": [[0, 1]],
+        "camera_count_total": 7,  # was 7 before filtering down to 1
+    }
+    agent.act("score_paths", context)
+    assert context["best_metrics"].camera_count_total == 7

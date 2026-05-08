@@ -1,7 +1,15 @@
 """
-Tests for file serving endpoints.
+Tests for file-serving endpoints.
 
-These tests verify the output file serving functionality with proper validation.
+These tests pin the ``/api/v1/outputs/*`` route surface against the
+filenames the analyzer actually writes today
+(``<city>_heatmap.html``, ``hotspot_plot_<city>.png``,
+``hotspots_<city>.geojson``, ``privacy_distribution.png``,
+``<city>_enriched_sensitivity.png``, and the per-route files under
+``routes/route_<hash>.{html,geojson}``). The fixture city is
+lowercase to match the production filename casing produced by
+``SurveillanceDataCollector.scrape`` (which lowercases user input
+when building paths).
 """
 
 import json
@@ -14,50 +22,61 @@ from src.api.main import app
 
 client = TestClient(app)
 
+TEST_CITY = "testcity"
+TEST_ROUTE_ID = "test123"
+
+# Smallest legal PNG: 8-byte signature + IHDR + IDAT + IEND. Used by tests
+# that assert ``image/png`` content-type so FileResponse doesn't object to
+# a malformed payload.
+PNG_BYTES = bytes.fromhex(
+    "89504e470d0a1a0a"
+    "0000000d49484452000000010000000108060000001f15c4890000000d4944415478"
+    "9c63000100000005000100"
+    "5e3aff7c0000000049454e44ae426082"
+)
+
 
 @pytest.fixture
 def mock_output_files(tmp_path, monkeypatch):
     """
-    Create mock output files for testing.
+    Create mock output files matching the analyzer's actual filenames.
 
     :param tmp_path: pytest temporary directory fixture
     :param monkeypatch: pytest monkeypatch fixture
     :return: Path to mock output directory
     """
-    # Create mock output directory
     output_dir = tmp_path / "overpass_data"
     output_dir.mkdir()
 
-    # Create mock files
-    test_city = "TestCity"
-
-    # GeoJSON files
-    (output_dir / f"{test_city}_enriched.geojson").write_text(
+    # Enriched + raw GeoJSON
+    (output_dir / f"{TEST_CITY}_enriched.geojson").write_text(
         json.dumps({"type": "FeatureCollection", "features": []})
     )
-    (output_dir / f"{test_city}.json").write_text(
+    (output_dir / f"{TEST_CITY}.json").write_text(
         json.dumps({"type": "FeatureCollection", "features": []})
     )
 
-    # Map files
-    (output_dir / f"{test_city}_heatmap.html").write_text("<html>Heatmap</html>")
-    (output_dir / f"{test_city}_hotspots_map.html").write_text("<html>Hotspots</html>")
+    # Maps (heatmap HTML, hotspots PNG)
+    (output_dir / f"{TEST_CITY}_heatmap.html").write_text("<html>Heatmap</html>")
+    (output_dir / f"hotspot_plot_{TEST_CITY}.png").write_bytes(PNG_BYTES)
 
-    # Route files
-    (output_dir / f"{test_city}_route_map.html").write_text("<html>Route</html>")
-    (output_dir / f"{test_city}_route.geojson").write_text(
+    # Charts: privacy + sensitivity (separate filename conventions)
+    (output_dir / "privacy_distribution.png").write_bytes(PNG_BYTES)
+    (output_dir / f"{TEST_CITY}_enriched_sensitivity.png").write_bytes(PNG_BYTES)
+
+    # Per-route files live under routes/. Mirror the production layout.
+    routes_dir = output_dir / "routes"
+    routes_dir.mkdir()
+    (routes_dir / f"route_{TEST_ROUTE_ID}.html").write_text("<html>Route</html>")
+    (routes_dir / f"route_{TEST_ROUTE_ID}.geojson").write_text(
         json.dumps({"type": "Feature", "geometry": {}, "properties": {}})
     )
 
-    # Statistics files
-    (output_dir / f"{test_city}_statistics.json").write_text(
-        json.dumps({"total_cameras": 100})
-    )
-    (output_dir / f"{test_city}_type_distribution.png").write_bytes(
-        b"\x89PNG\r\n\x1a\n"  # PNG header
+    # LLM-generated city report (Architecture Proposal #2)
+    (output_dir / f"{TEST_CITY}_report.md").write_text(
+        "## Overview\nstubbed report.\n", encoding="utf-8"
     )
 
-    # Patch the OUTPUT_BASE_DIR in outputs module
     from src.api.routes import outputs
 
     monkeypatch.setattr(outputs, "OUTPUT_BASE_DIR", output_dir)
@@ -67,7 +86,7 @@ def mock_output_files(tmp_path, monkeypatch):
 
 def test_get_city_geojson_enriched(mock_output_files):
     """Test retrieving enriched GeoJSON for a city."""
-    response = client.get("/api/v1/outputs/TestCity/geojson")
+    response = client.get(f"/api/v1/outputs/{TEST_CITY}/geojson")
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/geo+json"
@@ -78,7 +97,7 @@ def test_get_city_geojson_enriched(mock_output_files):
 
 def test_get_city_geojson_raw(mock_output_files):
     """Test retrieving raw scraped GeoJSON for a city."""
-    response = client.get("/api/v1/outputs/TestCity/geojson?enriched=false")
+    response = client.get(f"/api/v1/outputs/{TEST_CITY}/geojson?enriched=false")
 
     assert response.status_code == 200
     data = response.json()
@@ -94,43 +113,47 @@ def test_get_city_geojson_not_found():
 
 
 def test_get_city_map_heatmap(mock_output_files):
-    """Test retrieving heatmap HTML for a city."""
-    response = client.get("/api/v1/outputs/TestCity/map?map_type=heatmap")
+    """Heatmap endpoint serves ``<city>_heatmap.html`` as text/html."""
+    response = client.get(f"/api/v1/outputs/{TEST_CITY}/map?map_type=heatmap")
 
     assert response.status_code == 200
-    assert response.headers["content-type"] == "text/html; charset=utf-8"
+    assert response.headers["content-type"].startswith("text/html")
     assert b"Heatmap" in response.content
 
 
 def test_get_city_map_hotspots(mock_output_files):
-    """Test retrieving hotspots map HTML for a city."""
-    response = client.get("/api/v1/outputs/TestCity/map?map_type=hotspots")
+    """Hotspots endpoint serves ``hotspot_plot_<city>.png`` as image/png."""
+    response = client.get(f"/api/v1/outputs/{TEST_CITY}/map?map_type=hotspots")
 
     assert response.status_code == 200
-    assert response.headers["content-type"] == "text/html; charset=utf-8"
-    assert b"Hotspots" in response.content
+    assert response.headers["content-type"] == "image/png"
+    assert response.content.startswith(b"\x89PNG")
 
 
 def test_get_city_map_invalid_type(mock_output_files):
     """Test requesting invalid map type returns 400."""
-    response = client.get("/api/v1/outputs/TestCity/map?map_type=invalid")
+    response = client.get(f"/api/v1/outputs/{TEST_CITY}/map?map_type=invalid")
 
     assert response.status_code == 400
     assert "invalid map_type" in response.json()["detail"].lower()
 
 
 def test_get_city_route_map(mock_output_files):
-    """Test retrieving route map HTML for a city."""
-    response = client.get("/api/v1/outputs/TestCity/route?format=map")
+    """Per-route HTML lookup by route_id."""
+    response = client.get(
+        f"/api/v1/outputs/{TEST_CITY}/route/{TEST_ROUTE_ID}?filetype=map"
+    )
 
     assert response.status_code == 200
-    assert response.headers["content-type"] == "text/html; charset=utf-8"
+    assert response.headers["content-type"].startswith("text/html")
     assert b"Route" in response.content
 
 
 def test_get_city_route_geojson(mock_output_files):
-    """Test retrieving route GeoJSON for a city."""
-    response = client.get("/api/v1/outputs/TestCity/route?format=geojson")
+    """Per-route GeoJSON lookup by route_id."""
+    response = client.get(
+        f"/api/v1/outputs/{TEST_CITY}/route/{TEST_ROUTE_ID}?filetype=geojson"
+    )
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/geo+json"
@@ -139,54 +162,70 @@ def test_get_city_route_geojson(mock_output_files):
     assert data["type"] == "Feature"
 
 
-def test_get_city_route_invalid_format(mock_output_files):
-    """Test requesting invalid route format returns 400."""
-    response = client.get("/api/v1/outputs/TestCity/route?format=invalid")
+def test_get_city_route_invalid_filetype(mock_output_files):
+    """Test requesting invalid route filetype returns 400."""
+    response = client.get(
+        f"/api/v1/outputs/{TEST_CITY}/route/{TEST_ROUTE_ID}?filetype=invalid"
+    )
 
     assert response.status_code == 400
-    assert "invalid format" in response.json()["detail"].lower()
+    assert "invalid filetype" in response.json()["detail"].lower()
 
 
-def test_get_city_stats_json(mock_output_files):
-    """Test retrieving statistics JSON for a city."""
-    response = client.get("/api/v1/outputs/TestCity/stats?format=json")
-
-    assert response.status_code == 200
-    assert response.headers["content-type"] == "application/json"
-
-    data = response.json()
-    assert data["total_cameras"] == 100
-
-
-def test_get_city_stats_chart(mock_output_files):
-    """Test retrieving statistics chart for a city."""
-    response = client.get("/api/v1/outputs/TestCity/stats?format=chart")
+def test_get_city_charts_privacy(mock_output_files):
+    """Privacy chart serves the shared ``privacy_distribution.png``."""
+    response = client.get(f"/api/v1/outputs/{TEST_CITY}/charts?chart=privacy")
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/png"
     assert response.content.startswith(b"\x89PNG")
 
 
-def test_get_city_stats_invalid_format(mock_output_files):
-    """Test requesting invalid stats format returns 400."""
-    response = client.get("/api/v1/outputs/TestCity/stats?format=invalid")
+def test_get_city_charts_sensitivity(mock_output_files):
+    """Sensitivity chart serves the per-city sensitivity PNG."""
+    response = client.get(f"/api/v1/outputs/{TEST_CITY}/charts?chart=sensitivity")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert response.content.startswith(b"\x89PNG")
+
+
+def test_get_city_charts_invalid_type(mock_output_files):
+    """Test requesting invalid chart type returns 400."""
+    response = client.get(f"/api/v1/outputs/{TEST_CITY}/charts?chart=invalid")
 
     assert response.status_code == 400
-    assert "invalid format" in response.json()["detail"].lower()
+    assert "invalid chart type" in response.json()["detail"].lower()
+
+
+def test_get_city_report(mock_output_files):
+    """Report endpoint serves ``<city>_report.md`` as text/markdown."""
+    response = client.get(f"/api/v1/outputs/{TEST_CITY}/report")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/markdown")
+    assert "## Overview" in response.text
+
+
+def test_get_city_report_not_found():
+    """A city with no generated report returns 404."""
+    response = client.get("/api/v1/outputs/NonExistentCity/report")
+
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"].lower()
 
 
 def test_list_city_files(mock_output_files):
     """Test listing all files for a city."""
-    response = client.get("/api/v1/outputs/TestCity/list")
+    response = client.get(f"/api/v1/outputs/{TEST_CITY}/list")
 
     assert response.status_code == 200
     data = response.json()
 
-    assert data["city"] == "TestCity"
+    assert data["city"] == TEST_CITY
     assert data["file_count"] > 0
     assert isinstance(data["files"], list)
 
-    # Check file structure
     for file_info in data["files"]:
         assert "name" in file_info
         assert "path" in file_info
@@ -196,7 +235,7 @@ def test_list_city_files(mock_output_files):
 
 
 def test_list_city_files_no_files():
-    """Test listing files for city with no outputs returns empty list."""
+    """Listing a city with no outputs returns an empty list (HTTP 200)."""
     response = client.get("/api/v1/outputs/NonExistentCity/list")
 
     assert response.status_code == 200
@@ -208,8 +247,11 @@ def test_list_city_files_no_files():
 
 
 def test_get_file_by_name(mock_output_files):
-    """Test retrieving a file by its name."""
-    response = client.get("/api/v1/outputs/file/TestCity_enriched.geojson")
+    """Test retrieving a file by its name (city is a query param)."""
+    response = client.get(
+        f"/api/v1/outputs/file/{TEST_CITY}_enriched.geojson",
+        params={"city": TEST_CITY},
+    )
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/geo+json"
@@ -217,17 +259,16 @@ def test_get_file_by_name(mock_output_files):
 
 def test_get_file_by_name_with_dots():
     """Test that filenames with .. are rejected by validation logic."""
-    # The validation logic in get_file_by_name() should catch ".." in filename
-    # This verifies that our validation string check works correctly
     filename_with_dots = "..test.json"
-
-    # Verify our test case contains the pattern that should be rejected
     assert ".." in filename_with_dots
 
 
-def test_get_file_by_name_not_found():
-    """Test that non-existent files return 404."""
-    response = client.get("/api/v1/outputs/file/nonexistent.json")
+def test_get_file_by_name_not_found(mock_output_files):
+    """Test that non-existent files return 404 (with the city query param set)."""
+    response = client.get(
+        "/api/v1/outputs/file/nonexistent.json",
+        params={"city": TEST_CITY},
+    )
 
     assert response.status_code == 404
     assert "not found" in response.json()["detail"].lower()
@@ -256,11 +297,9 @@ def test_validate_path_security(tmp_path, monkeypatch):
 
     monkeypatch.setattr(outputs, "OUTPUT_BASE_DIR", output_dir)
 
-    # Create a file outside the output directory
     outside_file = tmp_path / "secret.txt"
     outside_file.write_text("secret")
 
-    # Try to access file outside output directory
     with pytest.raises(HTTPException) as exc_info:
         outputs.validate_path(outside_file)
 
@@ -278,7 +317,6 @@ def test_validate_path_directory(tmp_path, monkeypatch):
 
     monkeypatch.setattr(outputs, "OUTPUT_BASE_DIR", output_dir)
 
-    # Try to access a directory
     with pytest.raises(HTTPException) as exc_info:
         outputs.validate_path(output_dir)
 

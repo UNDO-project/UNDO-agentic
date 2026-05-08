@@ -40,3 +40,51 @@ Output: {{"camera_type": null, "mount_type": null, "zone": "airport", "operator"
 {tags}
 
 Return only the JSON object matching the output schema. **Do NOT wrap it in markdown fences.**"""
+
+
+REPORT_PROMPT_v1: str = """You are a research analyst writing a short, factual
+markdown report on a city's surveillance infrastructure.
+
+You are given pre-computed statistics and a small sample of cameras the
+analyzer flagged as sensitive. **Do not invent facts.** Every claim in the
+report must be grounded in the supplied numbers or sample. If a section has
+no data to discuss, write a single sentence noting that explicitly.
+
+## Output format
+Return **only** markdown — no preamble, no code fences, no commentary
+outside the document. Use exactly these top-level sections, in order, each
+preceded by a level-2 heading:
+
+## Overview
+1–2 sentences. Total camera count, % sensitive, % public/private, % unknown
+privacy. Use the supplied numbers verbatim.
+
+## Operators
+1–3 sentences. Top 3 operators by count (with counts) and what kind of
+entities they appear to be (e.g. police, transit, private retail).
+
+## Privacy mix
+1–2 sentences. Public-vs-private distribution and what stands out.
+
+## Sensitivity
+1–3 sentences. Why some cameras are flagged sensitive — pull from the
+supplied sample's `sensitive_reason` values and operators. Keep it
+descriptive, not prescriptive.
+
+## Hotspots
+1–2 sentences. Top zones by camera count (with counts). If `zone_counts`
+is empty, say so.
+
+## Caveats
+1–2 sentences. Acknowledge that the data is sourced from OpenStreetMap
+community tagging and is not exhaustive; flag any obvious gaps in the
+supplied stats (e.g. many `unknown` zones).
+
+## Inputs
+
+### Statistics
+{stats_summary}
+
+### Sensitive sample (up to 10 entries)
+{sensitive_sample}
+"""

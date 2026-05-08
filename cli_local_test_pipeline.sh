@@ -25,6 +25,11 @@ pytest tests/agents/test_surveillance_data_collector.py
 echo "Done..."
 echo "==============================================="
 
+echo "Running route finder agent tests"
+pytest tests/agents/test_route_finder_agent.py
+echo "Done..."
+echo "==============================================="
+
 echo "Running LangChain LLM wrapper tests"
 pytest tests/llm/test_langchain_llm.py
 echo "Done..."
@@ -35,8 +40,23 @@ pytest tests/llm/test_surveillance_llm_batch.py
 echo "Done..."
 echo "==============================================="
 
+echo "Running SurveillanceLLM city report tests"
+pytest tests/llm/test_surveillance_llm_report.py
+echo "Done..."
+echo "==============================================="
+
 echo "Running analysis chain batch enrichment tests"
 pytest tests/chains/test_analysis_chain_batch.py
+echo "Done..."
+echo "==============================================="
+
+echo "Running analysis chain report step tests"
+pytest tests/chains/test_analysis_chain_report.py
+echo "Done..."
+echo "==============================================="
+
+echo "Running analysis chain visualization cache tests"
+pytest tests/chains/test_analysis_chain_cache.py
 echo "Done..."
 echo "==============================================="
 
@@ -52,6 +72,11 @@ echo "==============================================="
 
 echo "Running chart tools tests"
 pytest tests/tools/test_chart_tools.py
+echo "Done..."
+echo "==============================================="
+
+echo "Running stat tools tests"
+pytest tests/tools/test_stat_tools.py
 echo "Done..."
 echo "==============================================="
 
@@ -80,13 +105,18 @@ pytest tests/config/test_langchain_config.py
 echo "Done..."
 echo "==============================================="
 
-echo "Running Routing tools tests"
-pytest tests/tools/test_routing_tools.py
+echo "Running pipeline configuration tests"
+pytest tests/config/test_pipeline_config.py
 echo "Done..."
 echo "==============================================="
 
-echo "Running orchestrator analyzer-skip tests"
-pytest tests/orchestration/test_analyzer_skip.py
+echo "Running route models / camera filter tests"
+pytest tests/config/test_route_models.py
+echo "Done..."
+echo "==============================================="
+
+echo "Running Routing tools tests"
+pytest tests/tools/test_routing_tools.py
 echo "Done..."
 echo "==============================================="
 

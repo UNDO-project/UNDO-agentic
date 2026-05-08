@@ -97,6 +97,15 @@ class SurveillanceAnalyzerAgent:
                 "plot_sensitivity_reasons", False
             ),
             "plot_hotspots": input_data.get("plot_hotspots", False),
+            "plot_operator_distribution": input_data.get(
+                "plot_operator_distribution", False
+            ),
+            "plot_manufacturer_distribution": input_data.get(
+                "plot_manufacturer_distribution", False
+            ),
+            "plot_install_timeline": input_data.get("plot_install_timeline", False),
+            "generate_report": input_data.get("generate_report", False),
+            "force_rerender": input_data.get("force_rerender", False),
         }
 
         try:
@@ -136,6 +145,16 @@ class SurveillanceAnalyzerAgent:
                 ]
             if "hotspots_chart" in result:
                 response["hotspots_chart"] = result["hotspots_chart"]
+            if "operator_chart_path" in result:
+                response["operator_chart_path"] = result["operator_chart_path"]
+            if "manufacturer_chart_path" in result:
+                response["manufacturer_chart_path"] = result["manufacturer_chart_path"]
+            if "install_timeline_chart_path" in result:
+                response["install_timeline_chart_path"] = result[
+                    "install_timeline_chart_path"
+                ]
+            if "report_path" in result:
+                response["report_path"] = result["report_path"]
 
             # Add visualization errors if any
             if "visualization_errors" in result:

@@ -2,9 +2,12 @@ import json
 from pathlib import Path
 
 from src.tools.io_tools import (
+    cache_hit,
     load_overpass_elements,
     save_enriched_elements,
     to_geojson,
+    visualization_cache_key,
+    write_sidecar,
 )
 
 ELEMENTS = [
@@ -74,3 +77,78 @@ def test_to_geojson_with_writing(tmp_path):
     written = json.loads(out_geojson.read_text(encoding="utf-8"))
     assert written == geo
     assert written["type"] == "FeatureCollection"
+
+
+# -- Per-artifact visualisation cache (Architecture Proposal #5) --
+
+
+def test_visualization_cache_key_is_deterministic():
+    """Same inputs → same key, regardless of dict ordering."""
+    k1 = visualization_cache_key("abc123", "heatmap", {"top_n": 10, "x": 1})
+    k2 = visualization_cache_key("abc123", "heatmap", {"x": 1, "top_n": 10})
+    assert k1 == k2
+
+
+def test_visualization_cache_key_changes_with_raw_hash():
+    k1 = visualization_cache_key("abc", "heatmap", {})
+    k2 = visualization_cache_key("xyz", "heatmap", {})
+    assert k1 != k2
+
+
+def test_visualization_cache_key_changes_with_vis_name():
+    k1 = visualization_cache_key("abc", "heatmap", {})
+    k2 = visualization_cache_key("abc", "hotspots", {})
+    assert k1 != k2
+
+
+def test_visualization_cache_key_changes_with_options():
+    """Acceptance criterion: changing top_n must invalidate the cache."""
+    k1 = visualization_cache_key("abc", "zone_sensitivity", {"top_n": 10})
+    k2 = visualization_cache_key("abc", "zone_sensitivity", {"top_n": 5})
+    assert k1 != k2
+
+
+def test_cache_hit_false_when_artifact_missing(tmp_path):
+    artifact = tmp_path / "heatmap.html"  # never created
+    write_sidecar(artifact, "key123")  # sidecar without artifact
+    assert cache_hit(artifact, "key123") is False
+
+
+def test_cache_hit_false_when_sidecar_missing(tmp_path):
+    artifact = tmp_path / "heatmap.html"
+    artifact.write_text("<html/>", encoding="utf-8")
+    assert cache_hit(artifact, "key123") is False
+
+
+def test_cache_hit_false_on_key_mismatch(tmp_path):
+    artifact = tmp_path / "heatmap.html"
+    artifact.write_text("<html/>", encoding="utf-8")
+    write_sidecar(artifact, "old-key")
+    assert cache_hit(artifact, "new-key") is False
+
+
+def test_cache_hit_true_on_artifact_plus_matching_sidecar(tmp_path):
+    artifact = tmp_path / "heatmap.html"
+    artifact.write_text("<html/>", encoding="utf-8")
+    write_sidecar(artifact, "key123")
+    assert cache_hit(artifact, "key123") is True
+
+
+def test_cache_hit_false_on_corrupt_sidecar(tmp_path):
+    """A malformed sidecar JSON is treated as a miss, not an error."""
+    artifact = tmp_path / "heatmap.html"
+    artifact.write_text("<html/>", encoding="utf-8")
+    sidecar = artifact.with_name(artifact.name + ".cache.json")
+    sidecar.write_text("not-json{", encoding="utf-8")
+    assert cache_hit(artifact, "key123") is False
+
+
+def test_write_sidecar_records_key_and_timestamp(tmp_path):
+    artifact = tmp_path / "heatmap.html"
+    artifact.write_text("<html/>", encoding="utf-8")
+    write_sidecar(artifact, "key123")
+
+    sidecar = artifact.with_name(artifact.name + ".cache.json")
+    payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert payload["key"] == "key123"
+    assert "ts" in payload and isinstance(payload["ts"], str)

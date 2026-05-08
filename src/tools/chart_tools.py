@@ -143,6 +143,159 @@ def plot_sensitivity_reasons(
     return out_path
 
 
+def _plot_top_n_bar(
+    counts: "Counter",
+    out_path: Path,
+    *,
+    title: str,
+    xlabel: str,
+    top_n: int,
+) -> Path:
+    """
+    Render a horizontal bar chart of the top-N most common entries from
+    ``counts``, bucketing the remainder as ``"other"``.
+
+    Empty input yields a single-bar ``"(no data)"`` placeholder so a
+    user-toggled chart still produces an observable artifact rather than
+    a missing file. Shared backbone for the operator and manufacturer
+    distribution charts.
+    """
+    if not counts:
+        labels = ["(no data)"]
+        values = [0]
+    else:
+        top = counts.most_common(top_n)
+        labels = [str(label) for label, _ in top]
+        values = [int(v) for _, v in top]
+        other_total = sum(counts.values()) - sum(values)
+        if other_total > 0:
+            labels.append("other")
+            values.append(int(other_total))
+
+    fig, ax = plt.subplots(figsize=(8, max(4, len(labels) * 0.5)))
+    y = list(range(len(labels)))
+    ax.barh(y, values)
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels)
+    ax.invert_yaxis()
+    ax.set_xlabel(xlabel)
+    ax.set_title(title)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+    return out_path
+
+
+def plot_operator_distribution(
+    stats: Dict[str, Any],
+    output_dir: Path,
+    top_n: int = 10,
+    filename: str = "operator_distribution.png",
+) -> Path:
+    """
+    Build and save a horizontal bar chart of camera count per operator.
+
+    :param stats: Summary-stats dict from ``compute_statistics``.
+    :param output_dir: Directory to save the chart.
+    :param top_n: Number of operators to plot (rest pooled as "other").
+    :param filename: Output filename. Callers pass ``operator_distribution_<city>.png``
+        to namespace per-city artifacts; default kept short for
+        ad-hoc invocations.
+    :return: Path to the written PNG.
+    """
+    counts: Counter = stats.get("operator_counts") or Counter()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return _plot_top_n_bar(
+        counts,
+        output_dir / filename,
+        title="Cameras per operator",
+        xlabel="Camera count",
+        top_n=top_n,
+    )
+
+
+def plot_install_timeline(
+    stats: Dict[str, Any],
+    output_dir: Path,
+    filename: str = "install_timeline.png",
+) -> Path:
+    """
+    Build and save a bar chart of camera count by install year.
+
+    The ``"unknown"`` bin (cameras whose ``start_date`` was missing or
+    non-parseable) is pinned to the leftmost bar so the gap in OSM
+    tagging is always visible at a glance. Numeric years follow,
+    sorted ascending.
+
+    :param stats: Summary-stats dict from ``compute_statistics``.
+        Must carry ``start_year_counts``.
+    :param output_dir: Directory to save the chart.
+    :param filename: Output filename. Callers pass
+        ``install_timeline_<city>.png`` to namespace per-city artifacts.
+    :return: Path to the written PNG.
+    """
+    counts: Counter = stats.get("start_year_counts") or Counter()
+
+    unknown = int(counts.get("unknown", 0))
+    year_items = sorted(
+        ((str(k), int(v)) for k, v in counts.items() if k != "unknown"),
+        key=lambda kv: kv[0],
+    )
+
+    labels: list = []
+    values: list = []
+    if unknown > 0:
+        labels.append("unknown")
+        values.append(unknown)
+    labels.extend(k for k, _ in year_items)
+    values.extend(v for _, v in year_items)
+
+    if not labels:
+        labels = ["(no data)"]
+        values = [0]
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.bar(labels, values)
+    ax.set_xlabel("Install year")
+    ax.set_ylabel("Camera count")
+    ax.set_title("Cameras by install year")
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(labels, rotation=45, ha="right")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    out_path = output_dir / filename
+    fig.tight_layout()
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+    return out_path
+
+
+def plot_manufacturer_distribution(
+    stats: Dict[str, Any],
+    output_dir: Path,
+    top_n: int = 10,
+    filename: str = "manufacturer_distribution.png",
+) -> Path:
+    """
+    Build and save a horizontal bar chart of camera count per manufacturer.
+
+    Mirrors :func:`plot_operator_distribution`. ``manufacturer`` is sparsely
+    tagged in OSM today, so the ``"(no data)"`` placeholder path is the
+    common case for many cities.
+    """
+    counts: Counter = stats.get("manufacturer_counts") or Counter()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return _plot_top_n_bar(
+        counts,
+        output_dir / filename,
+        title="Cameras per manufacturer",
+        xlabel="Camera count",
+        top_n=top_n,
+    )
+
+
 def plot_hotspots(
     hotspots_file: Union[str, Path],
     output_file: Union[str, Path],

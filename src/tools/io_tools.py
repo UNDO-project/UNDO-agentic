@@ -1,10 +1,95 @@
 from __future__ import annotations
 
+import hashlib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Union, Optional
 
 from src.config.logger import logger
+
+
+# -- Per-artifact visualisation cache (Architecture Proposal #5) --
+#
+# Each visualisation step in ``AnalysisChain.generate_visualizations``
+# writes a sidecar ``<artifact_path>.cache.json`` carrying a stable key
+# derived from ``(raw_hash, vis_name, options)``. On rerun we skip the
+# step if the artifact + matching sidecar are still on disk; this saves
+# the (sometimes-multi-second) chart renders and the LLM-driven report
+# call when nothing changed.
+
+
+def visualization_cache_key(
+    raw_hash: str, vis_name: str, options: Dict[str, Any]
+) -> str:
+    """
+    Compute a stable cache key for one visualisation artifact.
+
+    The key is a SHA-256 of the canonicalised tuple
+    ``(raw_hash, vis_name, options)``. Different option values (e.g.
+    a different ``top_n`` for the zone chart) produce different keys
+    so the artifact is regenerated; identical inputs produce the
+    same key so the cache is reused.
+
+    :param raw_hash: Hash of the underlying enriched data — same value
+        the analyzer chain uses for its own enrichment cache.
+    :param vis_name: Stable artifact name (``"heatmap"``, ``"report"``,
+        etc.). Used so two different artifacts derived from the same
+        ``raw_hash`` don't collide.
+    :param options: JSON-serialisable mapping of parameters that affect
+        the rendered output. Empty for parameter-less artifacts.
+    :return: 64-char hex digest.
+    """
+    payload = json.dumps(
+        {"raw_hash": raw_hash, "vis_name": vis_name, "options": options},
+        sort_keys=True,
+        ensure_ascii=False,
+        default=str,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _sidecar_path(artifact_path: Path) -> Path:
+    """Return the conventional ``<artifact>.cache.json`` next to ``artifact_path``."""
+    return artifact_path.with_name(artifact_path.name + ".cache.json")
+
+
+def cache_hit(artifact_path: Path, key: str) -> bool:
+    """
+    Return ``True`` when the artifact and its sidecar both exist and the
+    sidecar's recorded key matches ``key``.
+
+    A missing artifact, missing sidecar, malformed sidecar, or mismatched
+    key all yield ``False`` so the caller re-renders. The function never
+    raises — a corrupt cache is treated as a miss.
+    """
+    if not artifact_path.exists():
+        return False
+    sidecar = _sidecar_path(artifact_path)
+    if not sidecar.exists():
+        return False
+    try:
+        data = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(data, dict) and data.get("key") == key
+
+
+def write_sidecar(artifact_path: Path, key: str) -> None:
+    """
+    Write ``<artifact_path>.cache.json`` with the cache key and a UTC
+    timestamp so the cache is auditable from disk.
+
+    Failures are logged but never raised — a sidecar-write failure must
+    not abort the visualisation that just succeeded; it only forces a
+    re-render on the next run.
+    """
+    sidecar = _sidecar_path(artifact_path)
+    payload = {"key": key, "ts": datetime.now(timezone.utc).isoformat()}
+    try:
+        sidecar.write_text(json.dumps(payload), encoding="utf-8")
+    except OSError as e:
+        logger.warning(f"Failed to write sidecar {sidecar}: {e}")
 
 
 def load_overpass_elements(path: Path | str) -> List[Dict[str, Any]]:

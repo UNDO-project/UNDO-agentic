@@ -1,9 +1,9 @@
 """
 Tests for the orchestrator's on-scrape-complete hook.
 
-The hook fires once between scrape and analyzer dispatch with a payload
-that lets the API layer surface the element count + planned skip
-decision on the polled task response.
+The hook fires once between scrape and analyzer dispatch with the
+element count, so the API layer can surface "Analyzing N cameras…" on
+the polled task response.
 
 We exercise the helper directly to avoid needing a real scraper /
 analyzer / Ollama for these tests.
@@ -31,7 +31,6 @@ def _write_dummy_data(tmp_path):
 
 def test_notify_fires_once_with_run_payload(tmp_path):
     data_path = _write_dummy_data(tmp_path)
-    # changed=True → analyzer will run, not skip.
     scrape_result = {"changed": True, "elements_count": 152}
 
     captured: list[Dict[str, Any]] = []
@@ -42,14 +41,17 @@ def test_notify_fires_once_with_run_payload(tmp_path):
     assert len(captured) == 1
     payload = captured[0]
     assert payload["elements_count"] == 152
-    assert payload["will_skip_analyzer"] is False
     assert payload["data_path"] == str(data_path)
     assert payload["scrape_result"] == scrape_result
 
 
-def test_notify_fires_with_skip_payload_when_outputs_present(tmp_path):
+def test_notify_fires_when_scrape_unchanged(tmp_path):
+    """
+    Even when scrape reports unchanged data, the analyzer always runs
+    (the chain decides what to reuse via its enrichment cache and the
+    per-artifact visualisation cache). The hook fires identically.
+    """
     data_path = _write_dummy_data(tmp_path)
-    # changed=False AND the prior enriched geojson exists → skip path.
     data_path.with_name("lund_enriched.geojson").write_text("{}", encoding="utf-8")
     scrape_result = {"changed": False, "elements_count": 152}
 
@@ -59,25 +61,8 @@ def test_notify_fires_with_skip_payload_when_outputs_present(tmp_path):
     pipe._notify_scrape_complete(str(data_path), scrape_result)
 
     assert len(captured) == 1
-    assert captured[0]["will_skip_analyzer"] is True
     assert captured[0]["elements_count"] == 152
-
-
-def test_notify_fires_with_run_payload_when_outputs_missing(tmp_path):
-    """
-    ``changed=False`` alone is not enough — without prior outputs the
-    analyzer cannot be skipped, and the hook should reflect that so the
-    UI doesn't promise reuse the orchestrator can't deliver.
-    """
-    data_path = _write_dummy_data(tmp_path)
-    scrape_result = {"changed": False, "elements_count": 152}
-
-    captured: list[Dict[str, Any]] = []
-    pipe = _StubPipeline(on_scrape_complete=captured.append)
-
-    pipe._notify_scrape_complete(str(data_path), scrape_result)
-
-    assert captured[0]["will_skip_analyzer"] is False
+    assert "will_skip_analyzer" not in captured[0]
 
 
 def test_notify_no_listener_is_noop(tmp_path):
@@ -118,4 +103,3 @@ def test_notify_handles_missing_elements_count(tmp_path):
     pipe._notify_scrape_complete(str(data_path), scrape_result)
 
     assert captured[0]["elements_count"] is None
-    assert captured[0]["will_skip_analyzer"] is False

@@ -8,7 +8,59 @@ automatic validation, serialization, and documentation.
 from typing import Optional
 from pydantic import BaseModel, Field, ConfigDict
 
+from src.config.models.route_models import CameraFilter
 from src.config.pipeline_config import AnalysisScenario
+
+
+class OutputOverrides(BaseModel):
+    """
+    Per-toggle overrides layered on top of the chosen ``AnalysisScenario``.
+
+    Every field is optional. Only the fields the caller sets are merged
+    into the preset's ``PipelineConfig``; unset fields keep the preset's
+    default. Pass an empty object to keep the preset baseline exactly.
+    """
+
+    generate_geojson: Optional[bool] = Field(
+        default=None, description="Write the enriched-camera GeoJSON"
+    )
+    compute_stats: Optional[bool] = Field(
+        default=None, description="Compute the summary statistics dict"
+    )
+    generate_chart: Optional[bool] = Field(
+        default=None, description="Render the public/private privacy pie chart"
+    )
+    generate_heatmap: Optional[bool] = Field(
+        default=None, description="Render the folium heatmap (HTML)"
+    )
+    generate_hotspots: Optional[bool] = Field(
+        default=None, description="Compute DBSCAN hotspots GeoJSON"
+    )
+    plot_zone_sensitivity: Optional[bool] = Field(
+        default=None, description="Render the zone-sensitivity stacked bar chart"
+    )
+    plot_sensitivity_reasons: Optional[bool] = Field(
+        default=None, description="Render the sensitivity-reasons bar chart"
+    )
+    plot_hotspots: Optional[bool] = Field(
+        default=None, description="Render the hotspots scatter plot (PNG)"
+    )
+    plot_operator_distribution: Optional[bool] = Field(
+        default=None,
+        description="Render the top-N operator distribution bar chart",
+    )
+    plot_manufacturer_distribution: Optional[bool] = Field(
+        default=None,
+        description="Render the top-N manufacturer distribution bar chart",
+    )
+    plot_install_timeline: Optional[bool] = Field(
+        default=None,
+        description="Render the install-year timeline bar chart",
+    )
+    generate_report: Optional[bool] = Field(
+        default=None,
+        description="Generate an LLM-written markdown city report (<city>_report.md)",
+    )
 
 
 class ScrapeRequest(BaseModel):
@@ -59,7 +111,7 @@ class AnalyzeRequest(BaseModel):
     )
     scenario: AnalysisScenario = Field(
         default=AnalysisScenario.BASIC,
-        description="Analysis scenario preset (basic, full, quick, report, mapping)",
+        description="Analysis scenario preset (basic, full)",
     )
 
 
@@ -113,6 +165,13 @@ class RouteComputeRequest(BaseModel):
     end_lon: float = Field(
         ..., ge=-180.0, le=180.0, description="Ending point longitude"
     )
+    camera_filter: Optional[CameraFilter] = Field(
+        default=None,
+        description=(
+            "Optional camera filter narrowing which cameras feed into "
+            "routing exposure. Default (``None``) considers every camera."
+        ),
+    )
 
 
 class PipelineRequest(BaseModel):
@@ -124,6 +183,7 @@ class PipelineRequest(BaseModel):
     :param city: City name to analyze
     :param country: Optional ISO country code
     :param scenario: Analysis scenario preset
+    :param overrides: Optional per-toggle overrides layered over the preset
     :param routing_config: Optional routing configuration (enables routing if provided)
     """
 
@@ -131,6 +191,12 @@ class PipelineRequest(BaseModel):
         json_schema_extra={
             "examples": [
                 {"city": "Berlin", "country": "DE", "scenario": "basic"},
+                {
+                    "city": "Berlin",
+                    "country": "DE",
+                    "scenario": "basic",
+                    "overrides": {"generate_heatmap": True},
+                },
                 {
                     "city": "Lund",
                     "country": "SE",
@@ -155,7 +221,15 @@ class PipelineRequest(BaseModel):
     )
     scenario: AnalysisScenario = Field(
         default=AnalysisScenario.BASIC,
-        description="Analysis scenario preset",
+        description="Analysis scenario preset (basic, full)",
+    )
+    overrides: Optional[OutputOverrides] = Field(
+        default=None,
+        description=(
+            "Per-toggle overrides layered on top of the scenario preset. "
+            "Only fields explicitly set are applied; unset fields inherit "
+            "the preset's value."
+        ),
     )
     routing_config: Optional[RouteComputeRequest] = Field(
         default=None,
@@ -167,5 +241,13 @@ class PipelineRequest(BaseModel):
             "Bypass the scrape cache and refetch from Overpass even if a "
             "valid cache entry exists for this city. Use to capture cameras "
             "newly tagged in OSM before the configured TTL expires."
+        ),
+    )
+    force_rerender: bool = Field(
+        default=False,
+        description=(
+            "Bypass the per-artifact visualisation cache and redraw every "
+            "requested chart/map/report. Independent of ``force_refresh`` — "
+            "the enrichment cache is still honoured."
         ),
     )

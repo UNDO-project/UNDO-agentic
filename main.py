@@ -46,9 +46,43 @@ Examples:
     )
     parser.add_argument(
         "--scenario",
-        choices=[s.value for s in AnalysisScenario],
         default=AnalysisScenario.BASIC.value,
-        help="Analysis scenario preset (default: basic)",
+        help="Analysis scenario preset: basic | full (default: basic)",
+    )
+    parser.add_argument(
+        "--heatmap",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Override the preset for heatmap generation (--heatmap / --no-heatmap)",
+    )
+    parser.add_argument(
+        "--hotspots",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Override the preset for hotspot generation. Toggles both the "
+            "DBSCAN clustering output and the matplotlib plot together."
+        ),
+    )
+    parser.add_argument(
+        "--charts",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Override the preset for chart generation. Toggles the privacy "
+            "pie, zone-sensitivity bar, sensitivity-reasons bar, the "
+            "operator/manufacturer distribution bars, and the install "
+            "timeline together."
+        ),
+    )
+    parser.add_argument(
+        "--report",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Override the preset for the LLM-written markdown city report "
+            "(--report / --no-report)."
+        ),
     )
     parser.add_argument(
         "--output-dir",
@@ -79,6 +113,14 @@ Examples:
         help=(
             "Bypass the scrape cache and refetch from Overpass. "
             "Use to capture cameras newly tagged in OSM before the TTL expires."
+        ),
+    )
+    parser.add_argument(
+        "--force-rerender",
+        action="store_true",
+        help=(
+            "Bypass the per-artifact visualisation cache and redraw every "
+            "requested chart/map/report. Independent of --force-refresh."
         ),
     )
 
@@ -112,8 +154,56 @@ Examples:
         help="Ending longitude for route",
         default=None,
     )
+    parser.add_argument(
+        "--filter-sensitive",
+        action="store_true",
+        help=(
+            "Restrict routing exposure scoring to cameras the analyzer "
+            "flagged as sensitive. No effect without --enable-routing."
+        ),
+    )
+    parser.add_argument(
+        "--filter-operator",
+        action="append",
+        default=None,
+        metavar="NAME",
+        help=(
+            "Restrict routing exposure scoring to cameras whose operator "
+            "matches NAME. Repeatable to whitelist multiple operators."
+        ),
+    )
+    parser.add_argument(
+        "--filter-surveillance-type",
+        action="append",
+        default=None,
+        metavar="TYPE",
+        help=(
+            "Restrict routing exposure scoring to cameras whose "
+            "surveillance_type matches TYPE (e.g. 'camera', 'guard'). "
+            "Repeatable."
+        ),
+    )
 
-    return parser.parse_args()
+    args = parser.parse_args()
+
+    # Migration guard for the dropped scenarios. Raise a clear error
+    # pointing at the new toggle flags rather than letting a downstream
+    # ValueError surface deep in the pipeline.
+    removed = {"quick", "report", "mapping"}
+    if args.scenario in removed:
+        parser.error(
+            f"--scenario {args.scenario!r} was removed. Use "
+            f"--scenario basic or --scenario full and override individual "
+            f"outputs with --heatmap/--no-heatmap, --hotspots/--no-hotspots, "
+            f"--charts/--no-charts."
+        )
+    if args.scenario not in {s.value for s in AnalysisScenario}:
+        parser.error(
+            f"--scenario {args.scenario!r} is not recognised. "
+            f"Valid choices: basic, full."
+        )
+
+    return args
 
 
 def display_results(results: dict):
@@ -271,6 +361,26 @@ def main():
         config_kwargs["analyze_enabled"] = False
     if args.force_refresh:
         config_kwargs["force_refresh"] = True
+    if args.force_rerender:
+        config_kwargs["force_rerender"] = True
+
+    # Toggle overrides layered on top of the preset. Each flag covers a
+    # natural visualisation group; the underlying ``PipelineConfig`` fields
+    # are flipped together so the CLI surface stays small.
+    if args.heatmap is not None:
+        config_kwargs["generate_heatmap"] = args.heatmap
+    if args.hotspots is not None:
+        config_kwargs["generate_hotspots"] = args.hotspots
+        config_kwargs["plot_hotspots"] = args.hotspots
+    if args.charts is not None:
+        config_kwargs["generate_chart"] = args.charts
+        config_kwargs["plot_zone_sensitivity"] = args.charts
+        config_kwargs["plot_sensitivity_reasons"] = args.charts
+        config_kwargs["plot_operator_distribution"] = args.charts
+        config_kwargs["plot_manufacturer_distribution"] = args.charts
+        config_kwargs["plot_install_timeline"] = args.charts
+    if args.report is not None:
+        config_kwargs["generate_report"] = args.report
 
     # Routing configuration
     if args.enable_routing:
@@ -279,6 +389,22 @@ def main():
         config_kwargs["start_lon"] = args.start_lon
         config_kwargs["end_lat"] = args.end_lat
         config_kwargs["end_lon"] = args.end_lon
+
+        # Build the camera filter only when at least one constraint was
+        # asked for, so an unset CLI run keeps ``camera_filter=None`` and
+        # reuses old cache entries / scoring behaviour exactly.
+        if (
+            args.filter_sensitive
+            or args.filter_operator
+            or args.filter_surveillance_type
+        ):
+            from src.config.models.route_models import CameraFilter
+
+            config_kwargs["camera_filter"] = CameraFilter(
+                sensitive_only=bool(args.filter_sensitive),
+                operators=args.filter_operator,
+                surveillance_types=args.filter_surveillance_type,
+            )
 
     # Create and run pipeline
     try:

@@ -1,7 +1,77 @@
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+
+
+class CameraFilter(BaseModel):
+    """Filter applied to camera features before routing exposure scoring.
+
+    The enriched GeoJSON already carries ``operator``, ``surveillance_type``,
+    and ``sensitive`` per feature; this model lets a route request narrow the
+    cameras the routing pipeline considers without touching the analyzer.
+
+    Defaults are an inert filter (no fields set ⇒ ``matches`` returns ``True``
+    for every camera), so omitting the field on a ``RouteRequest`` preserves
+    pre-Issue-#6 behaviour byte-for-byte.
+
+    :param sensitive_only: When True, drop cameras whose ``sensitive``
+                           property is not truthy.
+    :param operators: When set, keep only cameras whose ``operator`` is in
+                      the list. Empty list means "keep none" — pass ``None``
+                      (the default) to disable the operator constraint.
+    :param surveillance_types: Same semantics as ``operators`` but for the
+                               ``surveillance_type`` property.
+    """
+
+    sensitive_only: bool = Field(
+        default=False,
+        description="Score only cameras flagged as sensitive by the analyzer.",
+    )
+    operators: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "Optional whitelist of operator names. Cameras whose operator "
+            "is not in the list are dropped before scoring."
+        ),
+    )
+    surveillance_types: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "Optional whitelist of surveillance_type values (e.g. 'camera', "
+            "'guard'). Cameras with a different type are dropped."
+        ),
+    )
+
+    def is_inert(self) -> bool:
+        """Return ``True`` when this filter would let every camera through.
+
+        Used as a fast-path in tools/agents so we can skip per-feature
+        property reads when no filter was actually requested.
+        """
+        return (
+            not self.sensitive_only
+            and self.operators is None
+            and self.surveillance_types is None
+        )
+
+    def matches(self, props: Dict[str, Any]) -> bool:
+        """Apply the filter to a single feature's properties dict.
+
+        :param props: The ``properties`` block of a GeoJSON feature.
+        :return: ``True`` when the camera passes every active constraint.
+        """
+        if self.sensitive_only and not props.get("sensitive"):
+            return False
+        if self.operators is not None and props.get("operator") not in set(
+            self.operators
+        ):
+            return False
+        if self.surveillance_types is not None and props.get(
+            "surveillance_type"
+        ) not in set(self.surveillance_types):
+            return False
+        return True
 
 
 class RouteRequest(BaseModel):
@@ -40,6 +110,14 @@ class RouteRequest(BaseModel):
     mode: Optional[str] = Field(
         default="walk", description="Logical travel mode, e.g. 'walk' or 'bike'."
     )
+    camera_filter: Optional[CameraFilter] = Field(
+        default=None,
+        description=(
+            "Optional camera filter. When provided, only matching cameras "
+            "are loaded for scoring; the default (None) preserves prior "
+            "behaviour and considers every camera in the dataset."
+        ),
+    )
 
 
 class RouteMetrics(BaseModel):
@@ -64,6 +142,15 @@ class RouteMetrics(BaseModel):
     )
     camera_count_near_route: int = Field(
         ..., description="Number of cameras falling within the route buffer."
+    )
+    camera_count_total: Optional[int] = Field(
+        default=None,
+        description=(
+            "Total cameras considered for scoring after any camera filter "
+            "was applied. ``None`` for legacy results that pre-date the "
+            "filter; otherwise the denominator for the 'X of Y cameras "
+            "considered' UI affordance."
+        ),
     )
     baseline_length_m: Optional[float] = Field(
         default=None,

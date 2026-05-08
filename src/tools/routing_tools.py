@@ -19,37 +19,85 @@ import osmnx as ox
 from shapely.geometry import LineString, Point
 
 from src.config.logger import logger
-from src.config.models.route_models import RouteMetrics
+from src.config.models.route_models import CameraFilter, RouteMetrics
 from src.config.settings import RouteSettings
 
 
-def load_camera_points(geojson_path: Path) -> List[Tuple[float, float]]:
+def load_camera_points(
+    geojson_path: Path,
+    camera_filter: Optional[CameraFilter] = None,
+) -> List[Tuple[float, float]]:
     """
     Extract camera coordinates from enriched GeoJSON FeatureCollection.
 
+    When a ``camera_filter`` is supplied, only features whose properties
+    satisfy ``CameraFilter.matches`` are returned. The default
+    (``camera_filter=None``) preserves pre-Issue-#6 behaviour — every Point
+    feature is loaded — so existing call sites and cache keys remain stable
+    until they explicitly opt in.
+
     :param geojson_path: Path to the enriched camera GeoJSON file.
-    :return: List of (latitude, longitude) tuples for each camera point.
+    :param camera_filter: Optional filter applied per-feature against the
+        feature's ``properties`` block before its coordinates are returned.
+    :return: List of (latitude, longitude) tuples for each matching camera.
     :raises FileNotFoundError: If geojson_path does not exist.
-    :raises ValueError: If GeoJSON contains no point features.
+    :raises ValueError: If GeoJSON contains no point features at all (the
+        filter producing zero results does **not** raise — that's a valid
+        empty exposure case the caller may want to surface to the user).
     """
     if not geojson_path.exists():
         raise FileNotFoundError(f"GeoJSON file not found: {geojson_path}")
 
     data = json.loads(geojson_path.read_text(encoding="utf-8"))
 
-    # Extract coordinates from Point features only
-    # GeoJSON format: [longitude, latitude], we return (latitude, longitude)
-    coords = [
-        (feat["geometry"]["coordinates"][1], feat["geometry"]["coordinates"][0])
-        for feat in data.get("features", [])
-        if feat.get("geometry", {}).get("type", "").lower() == "point"
-    ]
+    apply_filter = camera_filter is not None and not camera_filter.is_inert()
 
-    if not coords:
+    coords: List[Tuple[float, float]] = []
+    point_features = 0
+    for feat in data.get("features", []):
+        if feat.get("geometry", {}).get("type", "").lower() != "point":
+            continue
+        point_features += 1
+        if apply_filter and not camera_filter.matches(feat.get("properties", {})):
+            continue
+        # GeoJSON: [longitude, latitude]; we return (latitude, longitude).
+        coords.append(
+            (feat["geometry"]["coordinates"][1], feat["geometry"]["coordinates"][0])
+        )
+
+    if point_features == 0:
         raise ValueError(f"No point features found in GeoJSON: {geojson_path}")
 
-    logger.info(f"Loaded {len(coords)} camera points from {geojson_path.name}")
+    if apply_filter:
+        logger.info(
+            f"Loaded {len(coords)}/{point_features} camera points from "
+            f"{geojson_path.name} after camera filter"
+        )
+    else:
+        logger.info(f"Loaded {len(coords)} camera points from {geojson_path.name}")
     return coords
+
+
+def count_camera_features(geojson_path: Path) -> int:
+    """
+    Count Point features in an enriched camera GeoJSON without filtering.
+
+    Lets the routing agent report ``camera_count_total`` (pre-filter) next
+    to the filtered set fed into scoring. Cheaper than re-loading all coords
+    just for a length.
+
+    :param geojson_path: Path to the enriched camera GeoJSON file.
+    :return: Number of Point features present (0 if the file has none).
+    :raises FileNotFoundError: If geojson_path does not exist.
+    """
+    if not geojson_path.exists():
+        raise FileNotFoundError(f"GeoJSON file not found: {geojson_path}")
+    data = json.loads(geojson_path.read_text(encoding="utf-8"))
+    return sum(
+        1
+        for feat in data.get("features", [])
+        if feat.get("geometry", {}).get("type", "").lower() == "point"
+    )
 
 
 def build_pedestrian_graph(

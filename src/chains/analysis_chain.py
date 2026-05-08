@@ -294,13 +294,57 @@ class AnalysisChain:
                 "error": str(e),
             }
 
-    @staticmethod
+    def _cached_step(
+        self,
+        *,
+        vis_name: str,
+        error_label: str,
+        artifact_path: Path,
+        cache_key: str,
+        fn: Callable[[], Any],
+        errors: list,
+        force_rerender: bool,
+    ) -> Optional[Path]:
+        """
+        Run one visualisation step with the per-artifact cache wrapped in.
+
+        On a cache hit (artifact + matching sidecar present, ``force_rerender``
+        off) the underlying ``fn`` is not called — the existing path is
+        returned. On a miss, ``fn`` runs; on success a sidecar is written
+        next to the artifact recording the cache key. On failure the error
+        is appended to ``errors`` (matching the legacy log format
+        ``"<error_label> failed: <e>"``) and ``None`` is returned.
+
+        :return: The artifact path on success/cache-hit; ``None`` on failure.
+        """
+        from src.tools.io_tools import cache_hit, write_sidecar
+
+        if not force_rerender and cache_hit(artifact_path, cache_key):
+            logger.info(f"Reusing cached {vis_name} at {artifact_path}")
+            return artifact_path
+        try:
+            fn()
+        except Exception as e:
+            error_msg = f"{error_label} failed: {e}"
+            logger.error(error_msg)
+            errors.append(error_msg)
+            return None
+        write_sidecar(artifact_path, cache_key)
+        logger.info(f"Generated {vis_name} at {artifact_path}")
+        return artifact_path
+
     def generate_visualizations(
+        self,
         context: Dict[str, Any],
         options: Dict[str, bool],
     ) -> Dict[str, Any]:
         """
         Generate requested visualizations with error recovery.
+
+        Each artifact step is wrapped in :meth:`_cached_step` so a re-run
+        with identical ``raw_hash`` and option set is a no-op (per
+        Architecture Proposal #5). ``options["force_rerender"]`` bypasses
+        the artifact cache without touching the upstream enrichment cache.
 
         :param context: Pipeline context with enriched data
         :param options: Dictionary of visualization options
@@ -313,39 +357,51 @@ class AnalysisChain:
             plot_zone_sensitivity,
             plot_sensitivity_reasons,
             plot_hotspots as plot_hotspots_chart,
+            plot_operator_distribution,
+            plot_manufacturer_distribution,
+            plot_install_timeline,
         )
+        from src.tools.io_tools import visualization_cache_key
 
-        errors = []
+        errors: list = []
+        force_rerender = bool(options.get("force_rerender", False))
+        raw_hash = str(context.get("raw_hash") or "")
 
         # Generate heatmap
         if options.get("generate_heatmap"):
-            try:
-                geojson_path = Path(context["geojson_path"])
-                heatmap_path = geojson_path.with_suffix(".html")
-                to_heatmap(geojson_path, heatmap_path)
-                context["heatmap_path"] = str(heatmap_path)
-                logger.info(f"Generated heatmap at {heatmap_path}")
-            except Exception as e:
-                error_msg = f"Heatmap generation failed: {e}"
-                logger.error(error_msg)
-                errors.append(error_msg)
+            geojson_path = Path(context["geojson_path"])
+            heatmap_path = geojson_path.with_suffix(".html")
+            out = self._cached_step(
+                vis_name="heatmap",
+                error_label="Heatmap generation",
+                artifact_path=heatmap_path,
+                cache_key=visualization_cache_key(raw_hash, "heatmap", {}),
+                fn=lambda: to_heatmap(geojson_path, heatmap_path),
+                errors=errors,
+                force_rerender=force_rerender,
+            )
+            if out is not None:
+                context["heatmap_path"] = str(out)
 
-        # Generate hotspots
+        # Generate hotspots GeoJSON
         if options.get("generate_hotspots"):
-            try:
-                geojson_path = Path(context["geojson_path"])
-                hotspots_path = geojson_path.with_name(
-                    f"{geojson_path.stem}_hotspots.geojson"
-                )
-                to_hotspots(geojson_path, hotspots_path)
-                context["hotspots_path"] = str(hotspots_path)
-                logger.info(f"Generated hotspots at {hotspots_path}")
-            except Exception as e:
-                error_msg = f"Hotspots generation failed: {e}"
-                logger.error(error_msg)
-                errors.append(error_msg)
+            geojson_path = Path(context["geojson_path"])
+            hotspots_path = geojson_path.with_name(
+                f"{geojson_path.stem}_hotspots.geojson"
+            )
+            out = self._cached_step(
+                vis_name="hotspots",
+                error_label="Hotspots generation",
+                artifact_path=hotspots_path,
+                cache_key=visualization_cache_key(raw_hash, "hotspots", {}),
+                fn=lambda: to_hotspots(geojson_path, hotspots_path),
+                errors=errors,
+                force_rerender=force_rerender,
+            )
+            if out is not None:
+                context["hotspots_path"] = str(out)
 
-        # Compute statistics
+        # Compute statistics (in-memory; no artifact, no caching)
         if options.get("compute_stats", True):
             try:
                 stats = compute_statistics(context["enriched"])
@@ -359,52 +415,159 @@ class AnalysisChain:
         # Generate charts (only if stats available)
         if "stats" in context:
             output_dir = Path(context["path"]).parent
+            # Per-city stems on the distribution + timeline charts so a
+            # casually-downloaded PNG is self-identifying without depending
+            # on the directory name.
+            city_stem = Path(context["path"]).stem
 
             if options.get("generate_chart"):
-                try:
-                    chart_path = private_public_pie(context["stats"], output_dir)
-                    context["pie_chart_path"] = str(chart_path)
-                    logger.info(f"Generated pie chart at {chart_path}")
-                except Exception as e:
-                    error_msg = f"Pie chart generation failed: {e}"
-                    logger.error(error_msg)
-                    errors.append(error_msg)
+                pie_path = output_dir / "privacy_distribution.png"
+                out = self._cached_step(
+                    vis_name="pie chart",
+                    error_label="Pie chart generation",
+                    artifact_path=pie_path,
+                    cache_key=visualization_cache_key(raw_hash, "pie_chart", {}),
+                    fn=lambda: private_public_pie(context["stats"], output_dir),
+                    errors=errors,
+                    force_rerender=force_rerender,
+                )
+                if out is not None:
+                    context["pie_chart_path"] = str(out)
 
             if options.get("plot_zone_sensitivity"):
-                try:
-                    chart_path = plot_zone_sensitivity(context["stats"], output_dir)
-                    context["zone_sensitivity_chart"] = str(chart_path)
-                    logger.info(f"Generated zone sensitivity chart at {chart_path}")
-                except Exception as e:
-                    error_msg = f"Zone sensitivity chart failed: {e}"
-                    logger.error(error_msg)
-                    errors.append(error_msg)
+                zone_path = output_dir / "zone_sensitivity.png"
+                out = self._cached_step(
+                    vis_name="zone sensitivity chart",
+                    error_label="Zone sensitivity chart",
+                    artifact_path=zone_path,
+                    cache_key=visualization_cache_key(
+                        raw_hash, "zone_sensitivity", {"top_n": 10}
+                    ),
+                    fn=lambda: plot_zone_sensitivity(context["stats"], output_dir),
+                    errors=errors,
+                    force_rerender=force_rerender,
+                )
+                if out is not None:
+                    context["zone_sensitivity_chart"] = str(out)
 
             if options.get("plot_sensitivity_reasons"):
-                try:
-                    enriched_path = Path(context["enriched_path"])
-                    chart_path = enriched_path.with_name(
-                        f"{enriched_path.stem}_sensitivity.png"
-                    )
-                    plot_sensitivity_reasons(enriched_path, chart_path)
-                    context["sensitivity_reasons_chart"] = str(chart_path)
-                    logger.info(f"Generated sensitivity reasons chart at {chart_path}")
-                except Exception as e:
-                    error_msg = f"Sensitivity reasons chart failed: {e}"
-                    logger.error(error_msg)
-                    errors.append(error_msg)
+                enriched_path = Path(context["enriched_path"])
+                reasons_path = enriched_path.with_name(
+                    f"{enriched_path.stem}_sensitivity.png"
+                )
+                out = self._cached_step(
+                    vis_name="sensitivity reasons chart",
+                    error_label="Sensitivity reasons chart",
+                    artifact_path=reasons_path,
+                    cache_key=visualization_cache_key(
+                        raw_hash, "sensitivity_reasons", {"top_n": 5}
+                    ),
+                    fn=lambda: plot_sensitivity_reasons(enriched_path, reasons_path),
+                    errors=errors,
+                    force_rerender=force_rerender,
+                )
+                if out is not None:
+                    context["sensitivity_reasons_chart"] = str(out)
 
             if options.get("plot_hotspots") and "hotspots_path" in context:
-                try:
-                    hotspots_path = Path(context["hotspots_path"])
-                    chart_path = hotspots_path.with_suffix(".png")
-                    plot_hotspots_chart(hotspots_path, chart_path)
-                    context["hotspots_chart"] = str(chart_path)
-                    logger.info(f"Generated hotspots chart at {chart_path}")
-                except Exception as e:
-                    error_msg = f"Hotspots chart failed: {e}"
-                    logger.error(error_msg)
-                    errors.append(error_msg)
+                hotspots_path = Path(context["hotspots_path"])
+                hotspots_chart_path = hotspots_path.with_suffix(".png")
+                out = self._cached_step(
+                    vis_name="hotspots chart",
+                    error_label="Hotspots chart",
+                    artifact_path=hotspots_chart_path,
+                    cache_key=visualization_cache_key(raw_hash, "hotspots_chart", {}),
+                    fn=lambda: plot_hotspots_chart(hotspots_path, hotspots_chart_path),
+                    errors=errors,
+                    force_rerender=force_rerender,
+                )
+                if out is not None:
+                    context["hotspots_chart"] = str(out)
+
+            if options.get("plot_operator_distribution"):
+                op_filename = f"operator_distribution_{city_stem}.png"
+                op_path = output_dir / op_filename
+                out = self._cached_step(
+                    vis_name="operator distribution chart",
+                    error_label="Operator distribution chart",
+                    artifact_path=op_path,
+                    cache_key=visualization_cache_key(
+                        raw_hash, "operator_distribution", {"top_n": 10}
+                    ),
+                    fn=lambda: plot_operator_distribution(
+                        context["stats"], output_dir, filename=op_filename
+                    ),
+                    errors=errors,
+                    force_rerender=force_rerender,
+                )
+                if out is not None:
+                    context["operator_chart_path"] = str(out)
+
+            if options.get("plot_manufacturer_distribution"):
+                mf_filename = f"manufacturer_distribution_{city_stem}.png"
+                mf_path = output_dir / mf_filename
+                out = self._cached_step(
+                    vis_name="manufacturer distribution chart",
+                    error_label="Manufacturer distribution chart",
+                    artifact_path=mf_path,
+                    cache_key=visualization_cache_key(
+                        raw_hash, "manufacturer_distribution", {"top_n": 10}
+                    ),
+                    fn=lambda: plot_manufacturer_distribution(
+                        context["stats"], output_dir, filename=mf_filename
+                    ),
+                    errors=errors,
+                    force_rerender=force_rerender,
+                )
+                if out is not None:
+                    context["manufacturer_chart_path"] = str(out)
+
+            if options.get("plot_install_timeline"):
+                tl_filename = f"install_timeline_{city_stem}.png"
+                tl_path = output_dir / tl_filename
+                out = self._cached_step(
+                    vis_name="install timeline chart",
+                    error_label="Install timeline chart",
+                    artifact_path=tl_path,
+                    cache_key=visualization_cache_key(raw_hash, "install_timeline", {}),
+                    fn=lambda: plot_install_timeline(
+                        context["stats"], output_dir, filename=tl_filename
+                    ),
+                    errors=errors,
+                    force_rerender=force_rerender,
+                )
+                if out is not None:
+                    context["install_timeline_chart_path"] = str(out)
+
+            # LLM-generated narrative report. Depends on ``stats`` having
+            # been computed in the same call (we don't try to re-derive
+            # them on the report-only path — keep options orthogonal).
+            if options.get("generate_report"):
+                raw_path = Path(context["path"])
+                report_path = raw_path.with_name(f"{raw_path.stem}_report.md")
+
+                def _generate_report() -> None:
+                    sample = [
+                        el
+                        for el in context.get("enriched", [])
+                        if isinstance(el, dict)
+                        and isinstance(el.get("analysis"), dict)
+                        and el["analysis"].get("sensitive")
+                    ]
+                    markdown = self.llm.generate_city_report(context["stats"], sample)
+                    report_path.write_text(markdown, encoding="utf-8")
+
+                out = self._cached_step(
+                    vis_name="city report",
+                    error_label="City report generation",
+                    artifact_path=report_path,
+                    cache_key=visualization_cache_key(raw_hash, "city_report", {}),
+                    fn=_generate_report,
+                    errors=errors,
+                    force_rerender=force_rerender,
+                )
+                if out is not None:
+                    context["report_path"] = str(out)
 
         # Add errors to context if any occurred
         if errors:

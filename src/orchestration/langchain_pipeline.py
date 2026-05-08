@@ -10,6 +10,7 @@ from src.agents.surveillance_data_collector import (
 from src.agents.langchain_analyzer import SurveillanceAnalyzerAgent
 from src.agents.route_finder_agent import RouteFinderAgent
 from src.config.logger import logger
+from src.llm.surveillance_llm import check_ollama_reachable
 from src.config.pipeline_config import PipelineConfig, AnalysisScenario
 from src.config.settings import DatabaseSettings, LangChainSettings, RouteSettings
 from src.config.models.route_models import RouteRequest
@@ -63,9 +64,9 @@ class SurveillancePipeline:
         :param on_scrape_complete: Optional callback fired once after the
             scrape stage returns and before the analyzer stage starts.
             Receives a payload dict with ``scrape_result``, ``data_path``,
-            ``elements_count``, and ``will_skip_analyzer`` so callers (the
-            FastAPI route) can surface the count to the polled task
-            response and any future WebSocket consumer.
+            and ``elements_count`` so callers (the FastAPI route) can
+            surface the count to the polled task response and any future
+            WebSocket consumer.
         :param on_analyzer_progress: Optional callback fired once per
             analyzer batch with ``(enriched_count, total)``. Wired through
             to ``AnalysisChain.on_progress`` in ``_run_analyzer``. Lets
@@ -143,6 +144,17 @@ class SurveillancePipeline:
         }
 
         try:
+            # Preflight: fail fast if Ollama is down so we don't sink
+            # minutes into a scrape whose enrichment would 100% fail.
+            # Skipped when the analyzer is disabled — Ollama isn't needed.
+            if self.config.analyze_enabled:
+                try:
+                    check_ollama_reachable(self.settings)
+                except RuntimeError as e:
+                    logger.error(str(e))
+                    results["error"] = str(e)
+                    return self._finalize_results(results, PipelineStatus.FAILED)
+
             # Step 1: Scraping
             if self.config.scrape_enabled:
                 # Check for cancellation before scraping
@@ -328,33 +340,27 @@ class SurveillancePipeline:
         scrape_result: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
-        Execute the analyzer agent, or short-circuit when scrape data is
-        unchanged from the prior run.
+        Execute the analyzer agent.
 
-        Skip path: when ``scrape_result["changed"] is False`` and the prior
-        enriched outputs are still on disk next to ``data_path``, return a
-        synthetic success result pointing at those files. The expensive LLM
-        enrichment is the dominant cost here; reusing prior outputs when the
-        underlying OSM data is identical is the whole point of probe-and-
-        compare.
+        The analyzer's ``AnalysisChain`` already short-circuits LLM
+        enrichment when ``<stem>_enriched.json`` is on disk, and the
+        per-artifact visualisation cache (Issue #5) reuses any chart /
+        map / report whose ``(raw_hash, vis_name, options)`` key matches
+        the existing sidecar. So calling the analyzer on a "scrape
+        unchanged" run is cheap when nothing new is requested but still
+        renders newly-toggled outputs (e.g. BASIC → BASIC + Heatmap).
 
         :param data_path: Path to scraped data (may be cache-served).
-        :param scrape_result: The orchestrator's ``results["scrape"]`` dict;
-            consulted for ``changed`` and metadata propagation.
+        :param scrape_result: The orchestrator's ``results["scrape"]``
+            dict — accepted for API symmetry, currently unused.
         :return: Analyzer results.
         """
+        del scrape_result  # kept in signature for API symmetry
+
         # Check for cancellation at entry
         if self._check_cancellation():
             logger.info(f"Pipeline cancelled at analyzer entry for {data_path}")
             return {"success": False, "error": "Pipeline cancelled", "cancelled": True}
-
-        # Probe-and-compare skip: scrape said nothing changed and prior
-        # enriched outputs are still on disk → reuse them.
-        skip = self._maybe_skip_analyzer(data_path, scrape_result)
-        if skip is not None:
-            self.status = PipelineStatus.ANALYZING
-            self.current_step = "analyzing"
-            return skip
 
         self.status = PipelineStatus.ANALYZING
         self.current_step = "analyzing"
@@ -389,90 +395,6 @@ class SurveillancePipeline:
                 "error": str(e),
                 "path": data_path,
             }
-
-    @staticmethod
-    def will_skip_analyzer(
-        data_path: str,
-        scrape_result: Optional[Dict[str, Any]],
-    ) -> bool:
-        """
-        Predicate: would ``_maybe_skip_analyzer`` short-circuit for this
-        ``(data_path, scrape_result)`` pair?
-
-        Used by the on-scrape-complete hook to surface the planned
-        skip/run decision to the API layer without computing the full
-        synthetic result dict twice.
-
-        :return: True iff scrape reports unchanged AND the prior enriched
-            geojson is on disk.
-        """
-        if not scrape_result or scrape_result.get("changed") is not False:
-            return False
-        data = Path(data_path)
-        enriched_geojson = data.with_name(data.stem + "_enriched.geojson")
-        return enriched_geojson.exists()
-
-    @staticmethod
-    def _maybe_skip_analyzer(
-        data_path: str,
-        scrape_result: Optional[Dict[str, Any]],
-    ) -> Optional[Dict[str, Any]]:
-        """
-        If scrape reports unchanged data and prior enriched outputs exist,
-        synthesize an analyzer-success dict that points at them.
-
-        Returns ``None`` if the analyzer should run normally — either because
-        ``changed`` is True/missing or the prior enriched files are gone.
-        """
-        if not SurveillancePipeline.will_skip_analyzer(data_path, scrape_result):
-            data = Path(data_path)
-            enriched_geojson = data.with_name(data.stem + "_enriched.geojson")
-            # Only log the "missing prior outputs" case — the changed=True
-            # case is the normal run-the-analyzer path and doesn't need a
-            # log line of its own.
-            if (
-                scrape_result
-                and scrape_result.get("changed") is False
-                and not enriched_geojson.exists()
-            ):
-                logger.info(
-                    f"Cannot skip analyzer: prior enriched geojson missing at "
-                    f"{enriched_geojson}; will re-run."
-                )
-            return None
-
-        data = Path(data_path)
-        enriched_json = data.with_name(data.stem + "_enriched.json")
-        enriched_geojson = data.with_name(data.stem + "_enriched.geojson")
-
-        result: Dict[str, Any] = {
-            "success": True,
-            "path": str(data),
-            "element_count": scrape_result.get("elements_count", 0),
-            "cache_hit": True,
-            "skipped": True,
-            "skipped_reason": "scrape_unchanged",
-            "geojson_path": str(enriched_geojson),
-        }
-        if enriched_json.exists():
-            result["enriched_path"] = str(enriched_json)
-
-        # Surface the other prior visualizations if they're still on disk so
-        # the API/UI can link to them. Patterns mirror what the analyzer
-        # writes today.
-        city_dir = data.parent
-        stem = data.stem
-        for key, name in (
-            ("heatmap_path", f"{stem}_heatmap.html"),
-            ("hotspots_path", f"hotspots_{stem}.geojson"),
-            ("hotspots_chart", f"hotspot_plot_{stem}.png"),
-            ("pie_chart_path", f"stats_chart_{stem}.png"),
-        ):
-            candidate = city_dir / name
-            if candidate.exists():
-                result[key] = str(candidate)
-
-        return result
 
     def _run_router(
         self,
@@ -510,6 +432,7 @@ class SurveillancePipeline:
             end_lat=self.config.end_lat,
             end_lon=self.config.end_lon,
             data_path=enriched_geojson_path,
+            camera_filter=self.config.camera_filter,
         )
 
         try:
@@ -525,6 +448,8 @@ class SurveillancePipeline:
                 "length_m": route_result.metrics.length_m,
                 "exposure_score": route_result.metrics.exposure_score,
                 "camera_count": route_result.metrics.camera_count_near_route,
+                "camera_count_near_route": route_result.metrics.camera_count_near_route,
+                "camera_count_total": route_result.metrics.camera_count_total,
                 "baseline_length_m": route_result.metrics.baseline_length_m,
                 "baseline_exposure_score": route_result.metrics.baseline_exposure_score,
             }
@@ -560,8 +485,7 @@ class SurveillancePipeline:
         scrape_result: Optional[Dict[str, Any]],
     ) -> None:
         """
-        Fire ``on_scrape_complete`` once with the element count and the
-        planned analyzer-skip decision.
+        Fire ``on_scrape_complete`` once with the element count.
 
         Logs the same one-liner via loguru so the CLI surface gets the
         signal too. Exceptions raised by the listener are caught and
@@ -573,13 +497,9 @@ class SurveillancePipeline:
             if isinstance(scrape_result, dict)
             else None
         )
-        will_skip = self.will_skip_analyzer(data_path, scrape_result)
 
         if elements_count is not None:
-            if will_skip:
-                logger.info(f"Reusing prior analysis of {elements_count} cameras.")
-            else:
-                logger.info(f"Analyzing {elements_count} cameras…")
+            logger.info(f"Analyzing {elements_count} cameras…")
 
         if self.on_scrape_complete is None:
             return
@@ -588,7 +508,6 @@ class SurveillancePipeline:
             "scrape_result": scrape_result,
             "data_path": data_path,
             "elements_count": elements_count,
-            "will_skip_analyzer": will_skip,
         }
         try:
             self.on_scrape_complete(payload)

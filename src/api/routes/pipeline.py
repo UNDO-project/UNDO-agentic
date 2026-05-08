@@ -282,8 +282,15 @@ async def execute_pipeline_task(task_id: str, request: PipelineRequest) -> None:
         if await _check_and_broadcast_cancellation(task_id, "initialization"):
             return
 
-        # Build configuration from request
-        config_kwargs = {"force_refresh": request.force_refresh}
+        # Build configuration from request. Toggle overrides are layered
+        # on top of the scenario preset by ``create_pipeline`` (which does
+        # ``setattr`` per kwarg), so we only need to dump the set fields.
+        config_kwargs = {
+            "force_refresh": request.force_refresh,
+            "force_rerender": request.force_rerender,
+        }
+        if request.overrides is not None:
+            config_kwargs.update(request.overrides.model_dump(exclude_none=True))
 
         # Add routing config if provided
         if request.routing_config:
@@ -296,6 +303,8 @@ async def execute_pipeline_task(task_id: str, request: PipelineRequest) -> None:
                     "end_lon": request.routing_config.end_lon,
                 }
             )
+            if request.routing_config.camera_filter is not None:
+                config_kwargs["camera_filter"] = request.routing_config.camera_filter
 
         # Check for cancellation before scraping
         if await _check_and_broadcast_cancellation(task_id, "scraping"):
@@ -328,23 +337,17 @@ async def execute_pipeline_task(task_id: str, request: PipelineRequest) -> None:
 
         def _on_scrape_complete(payload: dict) -> None:
             elements_count = payload.get("elements_count")
-            will_skip = bool(payload.get("will_skip_analyzer"))
-
-            if will_skip:
-                msg = (
-                    f"Reusing prior analysis of {elements_count} cameras."
-                    if elements_count is not None
-                    else "Reusing prior analysis."
-                )
-            else:
-                msg = (
-                    f"Analyzing {elements_count} cameras…"
-                    if elements_count is not None
-                    else "Analyzing data..."
-                )
+            msg = (
+                f"Analyzing {elements_count} cameras…"
+                if elements_count is not None
+                else "Analyzing data..."
+            )
 
             task_manager.update_progress(task_id, 50, msg)
-            metadata_fields: dict = {"analysis_skipped": will_skip}
+            # ``analysis_skipped`` stays in metadata for UI back-compat but
+            # is always False now: the analyzer runs every time so the
+            # per-artifact visualisation cache can decide what to reuse.
+            metadata_fields: dict = {"analysis_skipped": False}
             if elements_count is not None:
                 metadata_fields["elements_count"] = elements_count
             task_manager.set_metadata(task_id, **metadata_fields)
@@ -354,7 +357,7 @@ async def execute_pipeline_task(task_id: str, request: PipelineRequest) -> None:
             current_stage["value"] = "analyzing"
 
             asyncio.run_coroutine_threadsafe(
-                _broadcast_analysis_starting(task_id, elements_count, will_skip),
+                _broadcast_analysis_starting(task_id, elements_count, False),
                 loop,
             )
 

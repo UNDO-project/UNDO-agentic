@@ -110,6 +110,11 @@ pytest tests/config/test_pipeline_config.py
 echo "Done..."
 echo "==============================================="
 
+echo "Running route models / camera filter tests"
+pytest tests/config/test_route_models.py
+echo "Done..."
+echo "==============================================="
+
 echo "Running Routing tools tests"
 pytest tests/tools/test_routing_tools.py
 echo "Done..."

@@ -40,6 +40,14 @@ class PipelineConfig(BaseModel):
             "before the configured TTL expires."
         ),
     )
+    force_rerender: bool = Field(
+        default=False,
+        description=(
+            "Bypass the per-artifact visualisation cache and redraw every "
+            "requested chart/map/report from scratch. Independent of "
+            "``force_refresh``: the upstream enrichment cache is honoured."
+        ),
+    )
 
     # Analyzer settings
     analyze_enabled: bool = Field(default=True, description="Enable data analysis step")
@@ -186,4 +194,5 @@ class PipelineConfig(BaseModel):
             "plot_manufacturer_distribution": self.plot_manufacturer_distribution,
             "plot_install_timeline": self.plot_install_timeline,
             "generate_report": self.generate_report,
+            "force_rerender": self.force_rerender,
         }

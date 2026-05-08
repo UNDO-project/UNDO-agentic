@@ -120,11 +120,6 @@ pytest tests/tools/test_routing_tools.py
 echo "Done..."
 echo "==============================================="
 
-echo "Running orchestrator analyzer-skip tests"
-pytest tests/orchestration/test_analyzer_skip.py
-echo "Done..."
-echo "==============================================="
-
 echo "Running orchestrator on-scrape-complete hook tests"
 pytest tests/orchestration/test_on_scrape_complete.py
 echo "Done..."

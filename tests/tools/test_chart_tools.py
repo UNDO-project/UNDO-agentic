@@ -109,7 +109,7 @@ def test_plot_operator_distribution_buckets_other(tmp_path):
 
 def test_plot_operator_distribution_handles_empty_counts(tmp_path):
     """
-    HF#4: empty input opts out — no PNG is written and ``None`` is
+    Empty input opts out — no PNG is written and ``None`` is
     returned so the chain skips registering a path.
     """
     stats = {"operator_counts": Counter()}
@@ -119,7 +119,7 @@ def test_plot_operator_distribution_handles_empty_counts(tmp_path):
 
 
 def test_plot_operator_distribution_handles_missing_key(tmp_path):
-    """A stats dict without ``operator_counts`` is also a no-op (HF#4)."""
+    """A stats dict without ``operator_counts`` is also a no-op."""
     result = plot_operator_distribution({}, tmp_path)
     assert result is None
     assert not (tmp_path / "operator_distribution.png").exists()
@@ -135,7 +135,7 @@ def test_plot_manufacturer_distribution_writes_default_filename(tmp_path):
 
 def test_plot_manufacturer_distribution_handles_empty_counts(tmp_path):
     """
-    HF#4: manufacturer is sparse in OSM data; the empty path opts out
+    Manufacturer is sparse in OSM data; the empty path opts out
     cleanly — no PNG, no chart-path key on the chain context.
     """
     stats = {"manufacturer_counts": Counter()}
@@ -172,7 +172,7 @@ def test_plot_install_timeline_handles_only_unknowns(tmp_path):
 
 
 def test_plot_install_timeline_handles_empty_counts(tmp_path):
-    """HF#4: empty year counts ⇒ no PNG, ``None`` return."""
+    """Empty year counts ⇒ no PNG, ``None`` return."""
     stats = {"start_year_counts": Counter()}
     result = plot_install_timeline(stats, tmp_path)
     assert result is None
@@ -180,7 +180,7 @@ def test_plot_install_timeline_handles_empty_counts(tmp_path):
 
 
 def test_plot_install_timeline_handles_missing_key(tmp_path):
-    """A stats dict without ``start_year_counts`` is also a no-op (HF#4)."""
+    """A stats dict without ``start_year_counts`` is also a no-op."""
     result = plot_install_timeline({}, tmp_path)
     assert result is None
     assert not (tmp_path / "install_timeline.png").exists()

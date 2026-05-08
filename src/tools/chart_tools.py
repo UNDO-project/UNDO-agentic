@@ -159,7 +159,7 @@ def _plot_top_n_bar(
 
     Returns ``None`` when ``counts`` is empty — no PNG is written, so
     the dashboard sees an absent file and surfaces a captioned empty
-    state instead of a degenerate ``(no data)`` bar (HF#4).
+    state instead of a degenerate ``(no data)`` bar.
 
     Shared backbone for the operator and manufacturer distribution charts.
     """
@@ -201,7 +201,7 @@ def plot_operator_distribution(
     Build and save a horizontal bar chart of camera count per operator.
 
     Returns ``None`` (and writes no file) when ``operator_counts`` is
-    empty (HF#4) so the dashboard can render a captioned empty state
+    empty so the dashboard can render a captioned empty state
     rather than a degenerate placeholder.
 
     :param stats: Summary-stats dict from ``compute_statistics``.
@@ -237,7 +237,7 @@ def plot_install_timeline(
     sorted ascending.
 
     Returns ``None`` (and writes no file) when ``start_year_counts``
-    is empty (HF#4).
+    is empty.
 
     :param stats: Summary-stats dict from ``compute_statistics``.
         Must carry ``start_year_counts``.
@@ -293,7 +293,7 @@ def plot_manufacturer_distribution(
 
     Mirrors :func:`plot_operator_distribution`. ``manufacturer`` is
     sparsely tagged in OSM today, so the ``None`` (no-file) path is
-    the common case for many cities (HF#4).
+    the common case for many cities.
     """
     counts: Counter = stats.get("manufacturer_counts") or Counter()
     output_dir.mkdir(parents=True, exist_ok=True)

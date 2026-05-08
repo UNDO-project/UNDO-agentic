@@ -318,7 +318,7 @@ class AnalysisChain:
         ``fn`` returning ``None`` or ``False`` is interpreted as a
         deliberate opt-out (e.g. an empty-counter chart). No sidecar is
         written and ``None`` is returned, so the chain context never
-        records a path to a file that doesn't exist (HF#4).
+        records a path to a file that doesn't exist.
 
         :return: The artifact path on success/cache-hit; ``None`` on
             failure or opt-out.
@@ -379,7 +379,7 @@ class AnalysisChain:
         # Generate heatmap. The filename derives from the city stem
         # (``<city>_heatmap.html``), not from the geojson path's
         # suffix — the ``/api/v1/outputs/{city}/map?map_type=heatmap``
-        # route serves that exact name (HF#1).
+        # route serves that exact name.
         if options.get("generate_heatmap"):
             geojson_path = Path(context["geojson_path"])
             raw_path = Path(context["path"])
@@ -570,7 +570,7 @@ class AnalysisChain:
                     markdown = self.llm.generate_city_report(context["stats"], sample)
                     report_path.write_text(markdown, encoding="utf-8")
                     # Truthy return so ``_cached_step`` doesn't treat the
-                    # implicit ``None`` as an opt-out (HF#4).
+                    # implicit ``None`` as an opt-out.
                     return report_path
 
                 out = self._cached_step(

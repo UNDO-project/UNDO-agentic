@@ -510,6 +510,7 @@ class SurveillancePipeline:
             end_lat=self.config.end_lat,
             end_lon=self.config.end_lon,
             data_path=enriched_geojson_path,
+            camera_filter=self.config.camera_filter,
         )
 
         try:
@@ -525,6 +526,8 @@ class SurveillancePipeline:
                 "length_m": route_result.metrics.length_m,
                 "exposure_score": route_result.metrics.exposure_score,
                 "camera_count": route_result.metrics.camera_count_near_route,
+                "camera_count_near_route": route_result.metrics.camera_count_near_route,
+                "camera_count_total": route_result.metrics.camera_count_total,
                 "baseline_length_m": route_result.metrics.baseline_length_m,
                 "baseline_exposure_score": route_result.metrics.baseline_exposure_score,
             }

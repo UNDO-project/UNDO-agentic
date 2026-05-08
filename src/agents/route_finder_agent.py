@@ -14,6 +14,7 @@ from src.tools.routing_tools import (
     build_pedestrian_graph,
     build_route_geojson,
     compute_exposure_for_path,
+    count_camera_features,
     generate_candidate_paths,
     load_camera_points,
     render_route_map,
@@ -72,13 +73,19 @@ class RouteFinderAgent(Agent):
         :param input_data: RouteRequest with city, coordinates, and optional data path.
         :return: Enriched observation with cache status and file paths.
         """
-        # Create cache key from request parameters
+        # Create cache key from request parameters. An active camera
+        # filter is appended so it cannot share a cache slot with a
+        # different filter — but an absent / inert filter contributes
+        # nothing to the key, keeping old cache entries valid.
+        filter_signature = self._filter_signature(input_data.camera_filter)
         cache_key_input = (
             f"{input_data.city}_{input_data.country}_"
             f"{input_data.start_lat}_{input_data.start_lon}_"
             f"{input_data.end_lat}_{input_data.end_lon}_"
             f"{self.settings.max_candidates}_{self.settings.buffer_radius_m}"
         )
+        if filter_signature:
+            cache_key_input = f"{cache_key_input}_{filter_signature}"
         cache_key = hashlib.sha256(cache_key_input.encode()).hexdigest()[:16]
 
         # Always derive city_slug for output paths
@@ -128,6 +135,7 @@ class RouteFinderAgent(Agent):
             "start_lon": input_data.start_lon,
             "end_lat": input_data.end_lat,
             "end_lon": input_data.end_lon,
+            "camera_filter": input_data.camera_filter,
             "cameras_geojson_path": cameras_geojson_path,
             "route_geojson_path": route_geojson_path,
             "route_map_path": route_map_path,
@@ -137,6 +145,19 @@ class RouteFinderAgent(Agent):
         }
 
         return observation
+
+    @staticmethod
+    def _filter_signature(camera_filter) -> str:
+        """Serialise a CameraFilter for cache-key inclusion.
+
+        Returns ``""`` for ``None`` or an inert filter so that adding a
+        no-op filter doesn't invalidate a previously cached unfiltered
+        route. Active filters serialise their fields with sorted keys
+        for determinism.
+        """
+        if camera_filter is None or camera_filter.is_inert():
+            return ""
+        return json.dumps(camera_filter.model_dump(), sort_keys=True, default=str)
 
     def plan(self, observation: Dict[str, Any]) -> List[str]:
         """
@@ -172,8 +193,24 @@ class RouteFinderAgent(Agent):
         """
         if action == "load_cameras":
             cameras_path = context["cameras_geojson_path"]
-            cameras = self.tools["load_cameras"](cameras_path)
+            camera_filter = context.get("camera_filter")
+            # ``count_camera_features`` walks the GeoJSON once to give us
+            # the pre-filter denominator for the response, then the
+            # filtered load happens normally. Any test override via the
+            # ``load_cameras`` tool slot keeps its existing single-arg
+            # contract — the filter is forwarded only when it's set.
+            try:
+                total = count_camera_features(cameras_path)
+            except FileNotFoundError:
+                total = 0
+            if camera_filter is not None:
+                cameras = self.tools["load_cameras"](
+                    cameras_path, camera_filter=camera_filter
+                )
+            else:
+                cameras = self.tools["load_cameras"](cameras_path)
             context["cameras"] = cameras
+            context["camera_count_total"] = total
             return cameras
 
         elif action == "build_graph":
@@ -263,6 +300,10 @@ class RouteFinderAgent(Agent):
             best_metrics.baseline_exposure_score = context[
                 "baseline_metrics"
             ].exposure_score
+            # Propagate the pre-filter total so the response carries the
+            # "X of Y cameras considered" denominator. ``camera_count_near_route``
+            # already came back from compute_exposure as the filtered hit count.
+            best_metrics.camera_count_total = context.get("camera_count_total")
 
             context["best_path"] = best_path
             context["best_metrics"] = best_metrics

@@ -285,7 +285,10 @@ async def execute_pipeline_task(task_id: str, request: PipelineRequest) -> None:
         # Build configuration from request. Toggle overrides are layered
         # on top of the scenario preset by ``create_pipeline`` (which does
         # ``setattr`` per kwarg), so we only need to dump the set fields.
-        config_kwargs = {"force_refresh": request.force_refresh}
+        config_kwargs = {
+            "force_refresh": request.force_refresh,
+            "force_rerender": request.force_rerender,
+        }
         if request.overrides is not None:
             config_kwargs.update(request.overrides.model_dump(exclude_none=True))
 

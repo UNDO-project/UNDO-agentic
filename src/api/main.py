@@ -60,7 +60,7 @@ app = FastAPI(
     2. Monitor progress via GET /api/v1/pipeline/{task_id}
     3. Retrieve generated files via /api/v1/outputs/...
     """,
-    version="1.0.0",
+    version="2.3.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,

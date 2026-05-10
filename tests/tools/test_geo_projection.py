@@ -1,6 +1,6 @@
 """
-Tests for the WGS84 ↔ UTM projection utility used by the hotspot
-pipeline (HSR#0).
+Tests for the WGS84 - UTM projection utility used by the hotspot
+pipeline.
 
 The contract that downstream tools rely on:
 

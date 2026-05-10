@@ -112,6 +112,99 @@ class HeatmapSettings(BaseSettings):
     blur: int = Field(default=10, description="The blur of points")
 
 
+class HotspotSettings(BaseSettings):
+    """
+    Thresholds for the four-layer hotspot pipeline.
+
+    Defaults are tuned for European/North American city-scale runs
+    (hundreds to low thousands of cameras). Override per-deployment
+    via env vars prefixed with ``HOTSPOT_``.
+    """
+
+    # Planar KDE (HSR#2)
+    kde_bandwidth: Union[str, float] = Field(
+        default="silverman",
+        description=(
+            "KDE bandwidth selector. Either a positive float in metres "
+            "or a rule-of-thumb name accepted by KDEpy "
+            "(``'silverman'``, ``'scott'``, ``'ISJ'``)."
+        ),
+    )
+    kde_grid_resolution_m: int = Field(
+        default=50,
+        description=(
+            "Spacing in metres between KDE grid samples. Smaller values "
+            "give crisper contours but quadratically more cells."
+        ),
+    )
+
+    # Getis-Ord Gi* hex grid (HSR#3)
+    h3_resolution: int = Field(
+        default=9,
+        description=(
+            "H3 hex resolution for the Gi* statistical layer. Resolution "
+            "9 ≈ 0.1 km² hexes (metro-wide view); 10 ≈ 0.015 km² "
+            "(neighbourhood view). Increase for denser cities."
+        ),
+    )
+    gi_star_p_threshold: float = Field(
+        default=0.05,
+        description=(
+            "FDR-adjusted p-value above which a hex is classified "
+            "``not_significant`` rather than hot/cold."
+        ),
+    )
+
+    # HDBSCAN polygons (HSR#1)
+    hdbscan_min_cluster_size: int = Field(
+        default=5,
+        description=(
+            "Minimum number of cameras for a cluster to be reported. "
+            "Smaller values fragment noisy areas; larger values miss "
+            "small but real clusters."
+        ),
+    )
+    hdbscan_min_samples: int = Field(
+        default=3,
+        description=(
+            "HDBSCAN's ``min_samples`` parameter — the conservativeness "
+            "of the clusterer. Larger values keep more points as noise."
+        ),
+    )
+
+    @field_validator("h3_resolution")
+    @classmethod
+    def _validate_h3_resolution(cls, value: int) -> int:
+        if not 0 <= value <= 15:
+            raise ValueError("h3_resolution must be between 0 and 15")
+        return value
+
+    @field_validator("gi_star_p_threshold")
+    @classmethod
+    def _validate_p_threshold(cls, value: float) -> float:
+        if not 0.0 < value < 1.0:
+            raise ValueError("gi_star_p_threshold must be in (0, 1)")
+        return value
+
+    @field_validator("hdbscan_min_cluster_size", "hdbscan_min_samples")
+    @classmethod
+    def _validate_positive(cls, value: int) -> int:
+        if value < 2:
+            raise ValueError("must be at least 2")
+        return value
+
+    @field_validator("kde_grid_resolution_m")
+    @classmethod
+    def _validate_grid_resolution(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("kde_grid_resolution_m must be positive")
+        return value
+
+    model_config = SettingsConfigDict(
+        env_file=".env", env_prefix="HOTSPOT_", extra="allow"
+    )
+
+
 class RouteSettings(BaseSettings):
     """
     Configuration for the low-surveillance routing logic.

@@ -61,7 +61,17 @@ Examples:
         default=None,
         help=(
             "Override the preset for hotspot generation. Toggles both the "
-            "DBSCAN clustering output and the matplotlib plot together."
+            "HDBSCAN clustering output and the matplotlib plot together."
+        ),
+    )
+    parser.add_argument(
+        "--gi-star",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        dest="gi_star",
+        help=(
+            "Override the preset for the Getis-Ord Gi* hex-grid layer. "
+            "Toggles both the GeoJSON artifact and the choropleth chart."
         ),
     )
     parser.add_argument(
@@ -306,6 +316,10 @@ def display_results(results: dict):
             files_table.add_row("Hotspots Data", str(analyze["hotspots_path"]))
         if analyze.get("plot_hotspots"):
             files_table.add_row("Hotspots Plot", str(analyze["plot_hotspots"]))
+        if analyze.get("gi_star_path"):
+            files_table.add_row("Gi* GeoJSON", str(analyze["gi_star_path"]))
+        if analyze.get("gi_star_chart"):
+            files_table.add_row("Gi* Plot", str(analyze["gi_star_chart"]))
         if analyze.get("chart_path"):
             files_table.add_row("Statistics Chart", str(analyze["chart_path"]))
 
@@ -372,6 +386,9 @@ def main():
     if args.hotspots is not None:
         config_kwargs["generate_hotspots"] = args.hotspots
         config_kwargs["plot_hotspots"] = args.hotspots
+    if args.gi_star is not None:
+        config_kwargs["generate_gi_star"] = args.gi_star
+        config_kwargs["plot_gi_star"] = args.gi_star
     if args.charts is not None:
         config_kwargs["generate_chart"] = args.charts
         config_kwargs["plot_zone_sensitivity"] = args.charts

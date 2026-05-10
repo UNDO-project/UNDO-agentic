@@ -228,22 +228,36 @@ def compute_kde(
             x_axis, y_axis, density_2d, thresholds[int(p)], epsg
         )
 
-    # For folium: keep cells above the lowest contour threshold so the
-    # heatmap visual matches the contour polygons. Without this filter
-    # we'd dump thousands of near-zero-weight points on the map and
-    # smear the visual.
-    visible_mask = density_flat >= thresholds[int(percentiles[0])]
-    visible_grid = grid[visible_mask]
-    visible_density = density_flat[visible_mask]
-    if visible_grid.shape[0] == 0:
+    # For folium: weight each *camera point* by the KDE density at its
+    # location, rather than dumping the entire grid in. Feeding ~10⁴
+    # grid cells to ``L.heatLayer`` at radius 15 px makes every cell's
+    # blob overlap its neighbours and saturates the whole urban
+    # footprint to solid red — the visual stops being informative.
+    # Using the camera points keeps the heatmap as sparse and crisp
+    # as the legacy raw-points version while still letting the KDE
+    # surface drive the colour ramp (clustered cameras get high
+    # weights; isolated ones get low weights).
+    dx = float(x_axis[1] - x_axis[0]) if len(x_axis) > 1 else 1.0
+    dy = float(y_axis[1] - y_axis[0]) if len(y_axis) > 1 else 1.0
+    x_idx = np.clip(
+        ((coords_utm[:, 0] - x_axis[0]) / dx).astype(int),
+        0,
+        len(x_axis) - 1,
+    )
+    y_idx = np.clip(
+        ((coords_utm[:, 1] - y_axis[0]) / dy).astype(int),
+        0,
+        len(y_axis) - 1,
+    )
+    density_at_cameras = density_2d[y_idx, x_idx]
+    max_density = float(density_at_cameras.max())
+    if max_density <= 0:
         weighted_points = np.empty((0, 3))
     else:
-        latlon = unproject_from_utm(visible_grid, epsg)
-        # Normalise weights to [0, 1] — folium's HeatMap expects a
-        # bounded scale and otherwise picks a colour ramp from the
-        # raw density values, which are tiny floats.
-        weights = visible_density / float(visible_density.max())
-        weighted_points = np.column_stack([latlon[:, 0], latlon[:, 1], weights])
+        weights = density_at_cameras / max_density
+        lats = np.array([p[0] for p in points], dtype=float)
+        lons = np.array([p[1] for p in points], dtype=float)
+        weighted_points = np.column_stack([lats, lons, weights])
 
     return KDEResult(
         weighted_points=weighted_points,

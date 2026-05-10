@@ -70,6 +70,11 @@ pytest tests/tools/test_mapping_tools.py
 echo "Done..."
 echo "==============================================="
 
+echo "Running geo projection tests"
+pytest tests/tools/test_geo_projection.py
+echo "Done..."
+echo "==============================================="
+
 echo "Running chart tools tests"
 pytest tests/tools/test_chart_tools.py
 echo "Done..."

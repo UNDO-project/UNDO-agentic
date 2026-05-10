@@ -80,6 +80,11 @@ pytest tests/tools/test_hotspot_clustering.py
 echo "Done..."
 echo "==============================================="
 
+echo "Running KDE density tests"
+pytest tests/tools/test_density_kde.py
+echo "Done..."
+echo "==============================================="
+
 echo "Running chart tools tests"
 pytest tests/tools/test_chart_tools.py
 echo "Done..."

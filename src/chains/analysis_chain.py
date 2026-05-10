@@ -359,7 +359,11 @@ class AnalysisChain:
         :param options: Dictionary of visualization options
         :return: Updated context with visualization paths
         """
-        from src.tools.mapping_tools import to_heatmap
+        from src.tools.density_kde import (
+            compute_kde,
+            write_density_geojson,
+            write_kde_heatmap_html,
+        )
         from src.tools.hotspot_clustering import (
             cluster_hdbscan,
             write_centroids_geojson,
@@ -384,25 +388,58 @@ class AnalysisChain:
         force_rerender = bool(options.get("force_rerender", False))
         raw_hash = str(context.get("raw_hash") or "")
 
-        # Generate heatmap. The filename derives from the city stem
-        # (``<city>_heatmap.html``), not from the geojson path's
-        # suffix — the ``/api/v1/outputs/{city}/map?map_type=heatmap``
-        # route serves that exact name.
+        # KDE-backed heatmap + density contours — two artifacts share one
+        # KDE pass. The filenames derive from the city stem
+        # (``<city>_heatmap.html``, ``<city>_density.geojson``), not from
+        # the geojson path's suffix — the ``/api/v1/outputs/{city}/...``
+        # routes serve those exact names. ``compute_kde`` is memoised so
+        # the second ``_cached_step`` reuses the first call's result on
+        # a cache miss.
         if options.get("generate_heatmap"):
             geojson_path = Path(context["geojson_path"])
             raw_path = Path(context["path"])
             heatmap_path = raw_path.with_name(f"{raw_path.stem}_heatmap.html")
+            density_path = raw_path.with_name(f"{raw_path.stem}_density.geojson")
+
+            kde_params = {
+                "method": "kde",
+                "bandwidth": str(hotspot_settings.kde_bandwidth),
+                "grid_resolution_m": hotspot_settings.kde_grid_resolution_m,
+            }
+
+            kde_cache: dict = {}
+
+            def _run_kde():
+                if "result" not in kde_cache:
+                    kde_cache["result"] = compute_kde(geojson_path, hotspot_settings)
+                return kde_cache["result"]
+
             out = self._cached_step(
                 vis_name="heatmap",
                 error_label="Heatmap generation",
                 artifact_path=heatmap_path,
-                cache_key=visualization_cache_key(raw_hash, "heatmap", {}),
-                fn=lambda: to_heatmap(geojson_path, heatmap_path),
+                # Cache key bumps to "heatmap_kde" so any sidecar from
+                # the legacy raw-points heatmap is invalidated on first
+                # run after upgrade.
+                cache_key=visualization_cache_key(raw_hash, "heatmap_kde", kde_params),
+                fn=lambda: write_kde_heatmap_html(_run_kde(), heatmap_path),
                 errors=errors,
                 force_rerender=force_rerender,
             )
             if out is not None:
                 context["heatmap_path"] = str(out)
+
+            out = self._cached_step(
+                vis_name="density contours",
+                error_label="Density contours generation",
+                artifact_path=density_path,
+                cache_key=visualization_cache_key(raw_hash, "density_kde", kde_params),
+                fn=lambda: write_density_geojson(_run_kde(), density_path),
+                errors=errors,
+                force_rerender=force_rerender,
+            )
+            if out is not None:
+                context["density_path"] = str(out)
 
         # Generate HDBSCAN hotspots — two artifacts share one cluster
         # pass: ``<city>_hotspots.geojson`` (centroids) and

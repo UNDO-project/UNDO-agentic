@@ -75,6 +75,11 @@ pytest tests/tools/test_geo_projection.py
 echo "Done..."
 echo "==============================================="
 
+echo "Running hotspot clustering tests"
+pytest tests/tools/test_hotspot_clustering.py
+echo "Done..."
+echo "==============================================="
+
 echo "Running chart tools tests"
 pytest tests/tools/test_chart_tools.py
 echo "Done..."

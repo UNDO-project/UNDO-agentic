@@ -143,6 +143,7 @@ def plot_sensitivity_reasons(
     ax.bar(labels, values)
     ax.set_ylabel("Count")
     ax.set_title("Camera counts vs sensitivity reasons")
+    ax.set_xticks(range(len(labels)))
     ax.set_xticklabels(labels, rotation=45, ha="right")
     fig.tight_layout()
 

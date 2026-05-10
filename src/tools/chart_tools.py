@@ -417,3 +417,108 @@ def plot_hotspots(
     fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
     return out
+
+
+# Colour ramp shared by the choropleth and any future legend swatch.
+# Blue cold → grey not-significant → red hot, mirroring the ArcGIS /
+# QGIS "Hot Spot Analysis" convention every reader of these maps
+# expects. Order matters: GeoPandas indexes by ``categories=`` below.
+_GI_STAR_COLOURS = {
+    "cold_99": "#08519c",
+    "cold_95": "#6baed6",
+    "not_significant": "#d9d9d9",
+    "hot_95": "#fb6a4a",
+    "hot_99": "#a50f15",
+}
+
+
+def plot_gi_star(
+    gi_star_file: Union[str, Path],
+    output_file: Union[str, Path],
+) -> Optional[Path]:
+    """
+    Render the Gi* hex grid as a choropleth on an OSM basemap.
+
+    The colours follow the ArcGIS Hot Spot Analysis ramp: deep red for
+    ``hot_99`` (strongest concentrations), pale red for ``hot_95``,
+    light grey for ``not_significant``, and the matching blues for cold
+    spots. A short legend explains the bands; the plot is dropped to
+    PNG at 150 DPI to match the rest of the chart suite.
+
+    :param gi_star_file: ``<city>_gi_star.geojson`` produced by
+        :func:`src.tools.spatial_stats.write_gi_star_geojson`.
+    :param output_file: PNG output path.
+    :return: ``output_file`` on success; ``None`` if the GeoJSON has
+        no features (so the caller's cache layer can skip the
+        artifact rather than write an empty PNG).
+    """
+    src_path = Path(gi_star_file)
+    raw = json.loads(src_path.read_text(encoding="utf-8"))
+    feats = raw.get("features", [])
+    if not feats:
+        logger.info("plot_gi_star: empty GeoJSON, skipping render")
+        return None
+
+    rows = []
+    for feat in feats:
+        geom = feat.get("geometry") or {}
+        if (geom.get("type") or "").lower() != "polygon":
+            continue
+        ring = geom["coordinates"][0]
+        rows.append(
+            {
+                "category": feat["properties"].get("category", "not_significant"),
+                "count": feat["properties"].get("count", 0),
+                "gi_star_z": feat["properties"].get("gi_star_z", 0.0),
+                "p_fdr": feat["properties"].get("p_fdr", 1.0),
+                "geometry": Polygon([(lon, lat) for lon, lat in ring]),
+            }
+        )
+    if not rows:
+        logger.info("plot_gi_star: no polygon features, skipping render")
+        return None
+
+    gdf = gpd.GeoDataFrame(rows, crs="EPSG:4326").to_crs(epsg=3857)
+
+    # Map category → colour up-front so a hex with a category not in
+    # our palette (shouldn't happen, but defends against future
+    # additions) renders as the neutral grey rather than crashing.
+    gdf["colour"] = (
+        gdf["category"]
+        .map(_GI_STAR_COLOURS)
+        .fillna(_GI_STAR_COLOURS["not_significant"])
+    )
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    gdf.plot(
+        ax=ax,
+        color=gdf["colour"],
+        edgecolor="white",
+        linewidth=0.3,
+        alpha=0.75,
+    )
+
+    cx.add_basemap(ax, source=cx.providers.OpenStreetMap.Mapnik)
+    ax.set_axis_off()
+    ax.set_title("Hot-spot analysis (Gi*, FDR-adjusted)")
+
+    # Manual legend so the categories show up even when a band has no
+    # cells in this run (e.g. small cities with no cold-spots).
+    from matplotlib.patches import Patch
+
+    legend_handles = [
+        Patch(facecolor=colour, edgecolor="white", label=label.replace("_", " "))
+        for label, colour in _GI_STAR_COLOURS.items()
+    ]
+    ax.legend(
+        handles=legend_handles,
+        loc="lower left",
+        framealpha=0.9,
+        title="Category",
+    )
+
+    out = Path(output_file)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return out

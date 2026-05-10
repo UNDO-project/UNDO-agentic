@@ -90,6 +90,7 @@ class SurveillanceAnalyzerAgent:
             "generate_geojson": input_data.get("generate_geojson", True),
             "generate_heatmap": input_data.get("generate_heatmap", False),
             "generate_hotspots": input_data.get("generate_hotspots", False),
+            "generate_gi_star": input_data.get("generate_gi_star", False),
             "compute_stats": input_data.get("compute_stats", True),
             "generate_chart": input_data.get("generate_chart", False),
             "plot_zone_sensitivity": input_data.get("plot_zone_sensitivity", False),
@@ -97,6 +98,7 @@ class SurveillanceAnalyzerAgent:
                 "plot_sensitivity_reasons", False
             ),
             "plot_hotspots": input_data.get("plot_hotspots", False),
+            "plot_gi_star": input_data.get("plot_gi_star", False),
             "plot_operator_distribution": input_data.get(
                 "plot_operator_distribution", False
             ),

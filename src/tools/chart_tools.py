@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import geopandas as gpd
 import contextily as cx
 from shapely import Point
+from shapely.geometry import Polygon
 
 from src.config.logger import logger
 
@@ -317,49 +318,99 @@ def plot_manufacturer_distribution(
 def plot_hotspots(
     hotspots_file: Union[str, Path],
     output_file: Union[str, Path],
+    polygons_file: Optional[Union[str, Path]] = None,
 ) -> Path:
     """
-    Read a GeoJSON of pre‐computed hotspots (with properties.cluster_id + count)
-    and plot them against an OpenStreetMap basemap.
-    :param hotspots_file: The file produced from DBSCAN
-    :param output_file: The Path to save the chart
-    :return:
+    Plot HDBSCAN hotspots: convex-hull polygons (filled, low alpha) with
+    cluster centroids overlaid as bubbles sized by camera count.
+
+    :param hotspots_file: ``<city>_hotspots.geojson`` (Point centroids).
+    :param output_file: PNG output path.
+    :param polygons_file: Optional ``<city>_hotspot_polygons.geojson``.
+        When omitted, the function looks for a sibling file named
+        ``<stem without _hotspots>_hotspot_polygons.geojson`` and
+        renders the hulls if present. Centroids alone still render if
+        no hull file is available (e.g. degenerate clusters).
+    :return: PNG output path.
     """
-    #  load clusters
-    hf = Path(hotspots_file)
-    raw = json.loads(hf.read_text(encoding="utf-8"))
+    centroid_path = Path(hotspots_file)
+    raw = json.loads(centroid_path.read_text(encoding="utf-8"))
     feats = raw.get("features", [])
 
-    # build a GeoDataFrame in WGS84
     rows = []
     for feat in feats:
         lon, lat = feat["geometry"]["coordinates"]
-        cid = feat["properties"]["cluster_id"]
-        cnt = feat["properties"]["count"]
-        rows.append({"cluster_id": cid, "count": cnt, "geometry": Point(lon, lat)})
-    gdf = gpd.GeoDataFrame(rows, crs="EPSG:4326").to_crs(epsg=3857)
+        rows.append(
+            {
+                "cluster_id": feat["properties"]["cluster_id"],
+                "count": feat["properties"]["count"],
+                "persistence": feat["properties"].get("persistence", 0.0),
+                "geometry": Point(lon, lat),
+            }
+        )
+    centroids_gdf = gpd.GeoDataFrame(rows, crs="EPSG:4326").to_crs(epsg=3857)
 
-    # prepare figure
+    # Locate the polygons file by convention if not supplied.
+    if polygons_file is None:
+        sibling = centroid_path.with_name(
+            centroid_path.name.replace("_hotspots.geojson", "_hotspot_polygons.geojson")
+        )
+        if sibling.exists() and sibling != centroid_path:
+            polygons_file = sibling
+
+    polygons_gdf: Optional[gpd.GeoDataFrame] = None
+    if polygons_file is not None:
+        try:
+            poly_raw = json.loads(Path(polygons_file).read_text(encoding="utf-8"))
+            poly_rows = []
+            for feat in poly_raw.get("features", []):
+                geom = feat.get("geometry") or {}
+                if (geom.get("type") or "").lower() != "polygon":
+                    continue
+                ring = geom["coordinates"][0]
+                poly_rows.append(
+                    {
+                        "cluster_id": feat["properties"]["cluster_id"],
+                        "geometry": Polygon([(lon, lat) for lon, lat in ring]),
+                    }
+                )
+            if poly_rows:
+                polygons_gdf = gpd.GeoDataFrame(poly_rows, crs="EPSG:4326").to_crs(
+                    epsg=3857
+                )
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning(f"Could not read hotspot polygons {polygons_file}: {e}")
+
     fig, ax = plt.subplots(figsize=(8, 8))
-    # size bubbles by count
-    sizes = (gdf["count"] / gdf["count"].max()) * 1000  # normalize → marker size
-    gdf.plot(
+
+    if polygons_gdf is not None and not polygons_gdf.empty:
+        polygons_gdf.plot(
+            ax=ax,
+            column="cluster_id",
+            cmap="tab10",
+            alpha=0.25,
+            edgecolor="black",
+            linewidth=0.8,
+        )
+
+    # Centroid bubbles sized by camera count. Guard against a single-cluster
+    # case where ``count.max() == count.min()`` so normalization stays sane.
+    max_count = float(centroids_gdf["count"].max() or 1)
+    sizes = (centroids_gdf["count"] / max_count) * 1000
+    centroids_gdf.plot(
         ax=ax,
         column="cluster_id",
         cmap="tab10",
         markersize=sizes,
-        alpha=0.7,
+        alpha=0.85,
         edgecolor="white",
         linewidth=0.5,
         legend=True,
     )
 
-    # add Web Mercator basemap
     cx.add_basemap(ax, source=cx.providers.OpenStreetMap.Mapnik)
-
-    # save
     ax.set_axis_off()
-    ax.set_title("Surveillance hotspots")
+    ax.set_title("Surveillance hotspots (HDBSCAN)")
     out = Path(output_file)
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, dpi=150, bbox_inches="tight")

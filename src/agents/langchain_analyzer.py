@@ -133,6 +133,12 @@ class SurveillanceAnalyzerAgent:
                 response["heatmap_path"] = result["heatmap_path"]
             if "hotspots_path" in result:
                 response["hotspots_path"] = result["hotspots_path"]
+            if "hotspot_polygons_path" in result:
+                response["hotspot_polygons_path"] = result["hotspot_polygons_path"]
+            if "density_path" in result:
+                response["density_path"] = result["density_path"]
+            if "gi_star_path" in result:
+                response["gi_star_path"] = result["gi_star_path"]
             if "stats" in result:
                 response["stats"] = result["stats"]
             if "pie_chart_path" in result:
@@ -145,6 +151,8 @@ class SurveillanceAnalyzerAgent:
                 ]
             if "hotspots_chart" in result:
                 response["hotspots_chart"] = result["hotspots_chart"]
+            if "gi_star_chart" in result:
+                response["gi_star_chart"] = result["gi_star_chart"]
             if "operator_chart_path" in result:
                 response["operator_chart_path"] = result["operator_chart_path"]
             if "manufacturer_chart_path" in result:

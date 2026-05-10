@@ -34,7 +34,8 @@ class OutputOverrides(BaseModel):
         default=None, description="Render the folium heatmap (HTML)"
     )
     generate_hotspots: Optional[bool] = Field(
-        default=None, description="Compute DBSCAN hotspots GeoJSON"
+        default=None,
+        description="Compute HDBSCAN hotspots (centroids + convex-hull polygons)",
     )
     plot_zone_sensitivity: Optional[bool] = Field(
         default=None, description="Render the zone-sensitivity stacked bar chart"

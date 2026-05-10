@@ -359,7 +359,12 @@ class AnalysisChain:
         :param options: Dictionary of visualization options
         :return: Updated context with visualization paths
         """
-        from src.tools.mapping_tools import to_heatmap, to_hotspots
+        from src.tools.mapping_tools import to_heatmap
+        from src.tools.hotspot_clustering import (
+            cluster_hdbscan,
+            write_centroids_geojson,
+            write_polygons_geojson,
+        )
         from src.tools.stat_tools import compute_statistics
         from src.tools.chart_tools import (
             private_public_pie,
@@ -371,6 +376,9 @@ class AnalysisChain:
             plot_install_timeline,
         )
         from src.tools.io_tools import visualization_cache_key
+        from src.config.settings import HotspotSettings
+
+        hotspot_settings = HotspotSettings()
 
         errors: list = []
         force_rerender = bool(options.get("force_rerender", False))
@@ -396,24 +404,64 @@ class AnalysisChain:
             if out is not None:
                 context["heatmap_path"] = str(out)
 
-        # Generate hotspots GeoJSON. Filename uses the raw city stem
-        # ( ``<city>_hotspots.geojson``), not the geojson path's
-        # ``_enriched_hotspots`` infix.
+        # Generate HDBSCAN hotspots — two artifacts share one cluster
+        # pass: ``<city>_hotspots.geojson`` (centroids) and
+        # ``<city>_hotspot_polygons.geojson`` (convex hulls). We cluster
+        # once and memoise via ``_run_clustering`` so the second
+        # ``_cached_step`` reuses the first call's result on a cache miss.
         if options.get("generate_hotspots"):
             geojson_path = Path(context["geojson_path"])
             raw_path = Path(context["path"])
             hotspots_path = raw_path.with_name(f"{raw_path.stem}_hotspots.geojson")
+            polygons_path = raw_path.with_name(
+                f"{raw_path.stem}_hotspot_polygons.geojson"
+            )
+
+            # Cache key bumps to "hotspots_hdbscan" so any sidecar from
+            # the legacy DBSCAN run is invalidated and the new artifact
+            # is regenerated on first run after upgrade.
+            cluster_params = {
+                "method": "hdbscan",
+                "min_cluster_size": hotspot_settings.hdbscan_min_cluster_size,
+                "min_samples": hotspot_settings.hdbscan_min_samples,
+            }
+
+            cluster_cache: dict = {}
+
+            def _run_clustering():
+                if "result" not in cluster_cache:
+                    cluster_cache["result"] = cluster_hdbscan(
+                        geojson_path, hotspot_settings
+                    )
+                return cluster_cache["result"]
+
             out = self._cached_step(
-                vis_name="hotspots",
-                error_label="Hotspots generation",
+                vis_name="hotspot centroids",
+                error_label="Hotspot centroids generation",
                 artifact_path=hotspots_path,
-                cache_key=visualization_cache_key(raw_hash, "hotspots", {}),
-                fn=lambda: to_hotspots(geojson_path, hotspots_path),
+                cache_key=visualization_cache_key(
+                    raw_hash, "hotspots_hdbscan", cluster_params
+                ),
+                fn=lambda: write_centroids_geojson(_run_clustering(), hotspots_path),
                 errors=errors,
                 force_rerender=force_rerender,
             )
             if out is not None:
                 context["hotspots_path"] = str(out)
+
+            out = self._cached_step(
+                vis_name="hotspot polygons",
+                error_label="Hotspot polygons generation",
+                artifact_path=polygons_path,
+                cache_key=visualization_cache_key(
+                    raw_hash, "hotspot_polygons_hdbscan", cluster_params
+                ),
+                fn=lambda: write_polygons_geojson(_run_clustering(), polygons_path),
+                errors=errors,
+                force_rerender=force_rerender,
+            )
+            if out is not None:
+                context["hotspot_polygons_path"] = str(out)
 
         # Compute statistics (in-memory; no artifact, no caching)
         if options.get("compute_stats", True):

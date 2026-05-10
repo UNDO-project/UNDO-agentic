@@ -369,12 +369,14 @@ class AnalysisChain:
             write_centroids_geojson,
             write_polygons_geojson,
         )
+        from src.tools.spatial_stats import compute_gi_star, write_gi_star_geojson
         from src.tools.stat_tools import compute_statistics
         from src.tools.chart_tools import (
             private_public_pie,
             plot_zone_sensitivity,
             plot_sensitivity_reasons,
             plot_hotspots as plot_hotspots_chart,
+            plot_gi_star as plot_gi_star_chart,
             plot_operator_distribution,
             plot_manufacturer_distribution,
             plot_install_timeline,
@@ -500,6 +502,39 @@ class AnalysisChain:
             if out is not None:
                 context["hotspot_polygons_path"] = str(out)
 
+        # Getis-Ord Gi* hex grid — the statistical layer. One artifact
+        # (``<city>_gi_star.geojson``) gated on ``generate_gi_star``.
+        # The downstream chart (``<city>_gi_star.png``) is a separate
+        # cached step so a researcher can opt into the GeoJSON without
+        # paying for the matplotlib + contextily render.
+        if options.get("generate_gi_star"):
+            geojson_path = Path(context["geojson_path"])
+            raw_path = Path(context["path"])
+            gi_star_path = raw_path.with_name(f"{raw_path.stem}_gi_star.geojson")
+
+            gi_star_params = {
+                "method": "getis_ord_gi_star",
+                "h3_resolution": hotspot_settings.h3_resolution,
+                "p_threshold": hotspot_settings.gi_star_p_threshold,
+            }
+
+            out = self._cached_step(
+                vis_name="Gi* hex grid",
+                error_label="Gi* hex grid generation",
+                artifact_path=gi_star_path,
+                cache_key=visualization_cache_key(
+                    raw_hash, "gi_star_geojson", gi_star_params
+                ),
+                fn=lambda: write_gi_star_geojson(
+                    compute_gi_star(geojson_path, hotspot_settings),
+                    gi_star_path,
+                ),
+                errors=errors,
+                force_rerender=force_rerender,
+            )
+            if out is not None:
+                context["gi_star_path"] = str(out)
+
         # Compute statistics (in-memory; no artifact, no caching)
         if options.get("compute_stats", True):
             try:
@@ -587,6 +622,21 @@ class AnalysisChain:
                 )
                 if out is not None:
                     context["hotspots_chart"] = str(out)
+
+            if options.get("plot_gi_star") and "gi_star_path" in context:
+                gi_star_geojson = Path(context["gi_star_path"])
+                gi_star_chart_path = output_dir / f"{city_stem}_gi_star.png"
+                out = self._cached_step(
+                    vis_name="Gi* choropleth",
+                    error_label="Gi* choropleth chart",
+                    artifact_path=gi_star_chart_path,
+                    cache_key=visualization_cache_key(raw_hash, "gi_star_chart", {}),
+                    fn=lambda: plot_gi_star_chart(gi_star_geojson, gi_star_chart_path),
+                    errors=errors,
+                    force_rerender=force_rerender,
+                )
+                if out is not None:
+                    context["gi_star_chart"] = str(out)
 
             if options.get("plot_operator_distribution"):
                 op_filename = f"{city_stem}_operator_distribution.png"

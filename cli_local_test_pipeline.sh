@@ -85,6 +85,11 @@ pytest tests/tools/test_density_kde.py
 echo "Done..."
 echo "==============================================="
 
+echo "Running Gi* spatial stats tests"
+pytest tests/tools/test_spatial_stats.py
+echo "Done..."
+echo "==============================================="
+
 echo "Running chart tools tests"
 pytest tests/tools/test_chart_tools.py
 echo "Done..."

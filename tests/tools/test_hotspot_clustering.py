@@ -1,15 +1,6 @@
 """
 Tests for the HDBSCAN hotspot detector.
 
-Acceptance criteria from HSR#1:
-
-- Two well-separated dense regions → exactly two clusters; persistence
-  is non-negative for each.
-- A single sparse spread → no clusters reported (everything noise).
-- The convex hull contains every member point of its cluster.
-- Empty / missing geometry → empty result, no exception.
-- The polygon GeoJSON closes its rings (first vertex == last vertex)
-  so consumers don't need to special-case open polygons.
 """
 
 import json

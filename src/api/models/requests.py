@@ -37,6 +37,13 @@ class OutputOverrides(BaseModel):
         default=None,
         description="Compute HDBSCAN hotspots (centroids + convex-hull polygons)",
     )
+    generate_gi_star: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Compute the Getis-Ord Gi* hex-grid statistical layer "
+            "(<city>_gi_star.geojson)."
+        ),
+    )
     plot_zone_sensitivity: Optional[bool] = Field(
         default=None, description="Render the zone-sensitivity stacked bar chart"
     )
@@ -45,6 +52,10 @@ class OutputOverrides(BaseModel):
     )
     plot_hotspots: Optional[bool] = Field(
         default=None, description="Render the hotspots scatter plot (PNG)"
+    )
+    plot_gi_star: Optional[bool] = Field(
+        default=None,
+        description="Render the Gi* choropleth chart (<city>_gi_star.png)",
     )
     plot_operator_distribution: Optional[bool] = Field(
         default=None,

@@ -371,8 +371,13 @@ class SurveillancePipeline:
         # ``None`` listener cleanly disables the hook for that run.
         self.analyzer.chain.on_progress = self.on_analyzer_progress
 
+        # ``country`` rides alongside the option toggles so the
+        # density-metrics step can hand it to ``build_pedestrian_graph``
+        # and hit the same graph cache the routing agent uses. The
+        # analyzer agent passes it through untouched.
         analyze_input = {
             "path": data_path,
+            "country": self.config.country_code,
             **self.config.to_analyzer_options(),
         }
 

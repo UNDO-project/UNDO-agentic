@@ -95,6 +95,18 @@ Examples:
         ),
     )
     parser.add_argument(
+        "--density-metrics",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        dest="density_metrics",
+        help=(
+            "Override the preset for the cameras-per-road-km headline "
+            "metric (--density-metrics / --no-density-metrics). Defaults "
+            "on for both BASIC and FULL presets — opt out when you don't "
+            "want to touch the OSMnx graph cache."
+        ),
+    )
+    parser.add_argument(
         "--output-dir",
         help="Output directory for results",
         default=None,
@@ -270,6 +282,12 @@ def display_results(results: dict):
         elif analyze.get("success"):
             elements = analyze.get("element_count", 0)
             table.add_row("Elements Analyzed", f"[green]{elements}[/green]")
+            metrics = analyze.get("density_metrics") or {}
+            if metrics.get("cameras_per_road_km") is not None:
+                table.add_row(
+                    "Cameras / road-km",
+                    f"[green]{metrics['cameras_per_road_km']:.3f}[/green]",
+                )
         else:
             table.add_row(
                 "Analysis", f"[red]Failed: {analyze.get('error', 'Unknown')}[/red]"
@@ -320,6 +338,8 @@ def display_results(results: dict):
             files_table.add_row("Gi* GeoJSON", str(analyze["gi_star_path"]))
         if analyze.get("gi_star_chart"):
             files_table.add_row("Gi* Plot", str(analyze["gi_star_chart"]))
+        if analyze.get("density_metrics_path"):
+            files_table.add_row("Density Metrics", str(analyze["density_metrics_path"]))
         if analyze.get("chart_path"):
             files_table.add_row("Statistics Chart", str(analyze["chart_path"]))
 
@@ -398,6 +418,8 @@ def main():
         config_kwargs["plot_install_timeline"] = args.charts
     if args.report is not None:
         config_kwargs["generate_report"] = args.report
+    if args.density_metrics is not None:
+        config_kwargs["compute_density_metrics"] = args.density_metrics
 
     # Routing configuration
     if args.enable_routing:

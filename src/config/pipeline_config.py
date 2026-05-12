@@ -126,6 +126,15 @@ class PipelineConfig(BaseModel):
             "and never abort the run."
         ),
     )
+    compute_density_metrics: bool = Field(
+        default=True,
+        description=(
+            "Compute headline cameras-per-road-km + cameras-per-km² and "
+            "emit <city>_density_metrics.json. Reuses the pedestrian "
+            "graph cached by the routing agent; on a cold cache the "
+            "first run downloads it. Cheap enough to default on."
+        ),
+    )
 
     # Pipeline behavior
     stop_on_error: bool = Field(
@@ -193,6 +202,7 @@ class PipelineConfig(BaseModel):
                 plot_manufacturer_distribution=True,
                 plot_install_timeline=True,
                 generate_report=True,
+                compute_density_metrics=True,
             )
 
         # BASIC baseline: enriched data + stats, no charts or maps.
@@ -223,5 +233,6 @@ class PipelineConfig(BaseModel):
             "plot_manufacturer_distribution": self.plot_manufacturer_distribution,
             "plot_install_timeline": self.plot_install_timeline,
             "generate_report": self.generate_report,
+            "compute_density_metrics": self.compute_density_metrics,
             "force_rerender": self.force_rerender,
         }

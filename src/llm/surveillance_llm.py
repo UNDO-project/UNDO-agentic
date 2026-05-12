@@ -196,6 +196,7 @@ class SurveillanceLLM:
         self,
         stats: Dict[str, Any],
         sample: list,
+        density_metrics: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         Generate a fixed-section markdown city report from the
@@ -211,12 +212,16 @@ class SurveillanceLLM:
         :param sample: List of enriched camera dicts (each with
             ``analysis``) for cameras flagged sensitive. The method
             extracts the relevant fields and truncates to 10 entries.
+        :param density_metrics: Optional dict from
+            ``<city>_density_metrics.json`` — when supplied, the
+            cameras-per-road-km headline number is injected into the
+            stats block the LLM sees, so the Overview can quote it.
         :return: Markdown report as a single string.
         :raise: ``RuntimeError`` if the LLM call fails. Callers should
             wrap this in a try/except so a report failure does not
             abort the analyzer run.
         """
-        stats_summary = self._summarize_stats_for_report(stats)
+        stats_summary = self._summarize_stats_for_report(stats, density_metrics)
         sample_block = self._format_sensitive_sample(sample)
 
         prompt_template = PromptTemplate(
@@ -237,12 +242,17 @@ class SurveillanceLLM:
         return str(result).strip()
 
     @staticmethod
-    def _summarize_stats_for_report(stats: Dict[str, Any]) -> str:
+    def _summarize_stats_for_report(
+        stats: Dict[str, Any],
+        density_metrics: Optional[Dict[str, Any]] = None,
+    ) -> str:
         """
         Render a compact, prompt-friendly summary of the stats dict.
 
         ``Counter`` values are emitted as ``most_common(top_n)`` lists
         so the LLM has the same prioritised view the charts use.
+        ``density_metrics`` (when supplied) injects the road-km headline
+        numbers so the report can quote them in its opening sentence.
         """
 
         def _top(counter_like: Any, n: int = 5) -> list:
@@ -271,6 +281,15 @@ class SurveillanceLLM:
             f"- top_zones: {_top(stats.get('zone_counts'))}",
             f"- top_zones_by_sensitive: {_top(stats.get('zone_sensitivity_counts'))}",
         ]
+        if density_metrics:
+            lines.extend(
+                [
+                    f"- cameras_per_road_km: {density_metrics.get('cameras_per_road_km')}",
+                    f"- total_road_km: {density_metrics.get('total_road_km')}",
+                    f"- cameras_per_km2: {density_metrics.get('cameras_per_km2')}",
+                    f"- area_km2: {density_metrics.get('area_km2')}",
+                ]
+            )
         return "\n".join(lines)
 
     @staticmethod

@@ -34,7 +34,15 @@ class OutputOverrides(BaseModel):
         default=None, description="Render the folium heatmap (HTML)"
     )
     generate_hotspots: Optional[bool] = Field(
-        default=None, description="Compute DBSCAN hotspots GeoJSON"
+        default=None,
+        description="Compute HDBSCAN hotspots (centroids + convex-hull polygons)",
+    )
+    generate_gi_star: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Compute the Getis-Ord Gi* hex-grid statistical layer "
+            "(<city>_gi_star.geojson)."
+        ),
     )
     plot_zone_sensitivity: Optional[bool] = Field(
         default=None, description="Render the zone-sensitivity stacked bar chart"
@@ -44,6 +52,10 @@ class OutputOverrides(BaseModel):
     )
     plot_hotspots: Optional[bool] = Field(
         default=None, description="Render the hotspots scatter plot (PNG)"
+    )
+    plot_gi_star: Optional[bool] = Field(
+        default=None,
+        description="Render the Gi* choropleth chart (<city>_gi_star.png)",
     )
     plot_operator_distribution: Optional[bool] = Field(
         default=None,
@@ -60,6 +72,13 @@ class OutputOverrides(BaseModel):
     generate_report: Optional[bool] = Field(
         default=None,
         description="Generate an LLM-written markdown city report (<city>_report.md)",
+    )
+    compute_density_metrics: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Compute the cameras-per-road-km headline metric "
+            "(<city>_density_metrics.json)."
+        ),
     )
 
 

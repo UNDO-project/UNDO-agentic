@@ -70,6 +70,31 @@ pytest tests/tools/test_mapping_tools.py
 echo "Done..."
 echo "==============================================="
 
+echo "Running geo projection tests"
+pytest tests/tools/test_geo_projection.py
+echo "Done..."
+echo "==============================================="
+
+echo "Running hotspot clustering tests"
+pytest tests/tools/test_hotspot_clustering.py
+echo "Done..."
+echo "==============================================="
+
+echo "Running KDE density tests"
+pytest tests/tools/test_density_kde.py
+echo "Done..."
+echo "==============================================="
+
+echo "Running Gi* spatial stats tests"
+pytest tests/tools/test_spatial_stats.py
+echo "Done..."
+echo "==============================================="
+
+echo "Running density-metrics tests (cameras-per-road-km)"
+pytest tests/tools/test_density_metrics.py
+echo "Done..."
+echo "==============================================="
+
 echo "Running chart tools tests"
 pytest tests/tools/test_chart_tools.py
 echo "Done..."

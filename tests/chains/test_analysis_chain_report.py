@@ -27,8 +27,12 @@ class _StubLLM:
         self._response = response
         self._raise = raise_on_call
 
-    def generate_city_report(self, stats: dict, sample: list) -> str:
-        self.calls.append({"stats": stats, "sample": sample})
+    def generate_city_report(
+        self, stats: dict, sample: list, density_metrics: dict = None
+    ) -> str:
+        self.calls.append(
+            {"stats": stats, "sample": sample, "density_metrics": density_metrics}
+        )
         if self._raise:
             raise RuntimeError("City report generation failed: ollama unreachable")
         return self._response

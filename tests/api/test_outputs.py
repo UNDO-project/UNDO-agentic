@@ -266,6 +266,136 @@ def test_list_city_files_excludes_cache_sidecars(tmp_path, monkeypatch):
     )
 
 
+@pytest.fixture
+def mock_hotspot_artifacts(tmp_path, monkeypatch):
+    """
+    Per-city directory pre-populated with the five hotspot-redesign
+    artifacts: centroids, polygons, KDE contours, Gi* hexes,
+    and the density-metrics JSON. Used to pin the named GET routes
+    introduced in HSR#5 plus the ``/list`` integration.
+    """
+    base_dir = tmp_path / "overpass_data"
+    output_dir = base_dir / TEST_CITY
+    output_dir.mkdir(parents=True)
+
+    empty_fc = json.dumps({"type": "FeatureCollection", "features": []})
+    (output_dir / f"{TEST_CITY}_density.geojson").write_text(empty_fc)
+    (output_dir / f"{TEST_CITY}_gi_star.geojson").write_text(empty_fc)
+    (output_dir / f"{TEST_CITY}_hotspots.geojson").write_text(empty_fc)
+    (output_dir / f"{TEST_CITY}_hotspot_polygons.geojson").write_text(empty_fc)
+    (output_dir / f"{TEST_CITY}_density_metrics.json").write_text(
+        json.dumps(
+            {
+                "total_cameras": 42,
+                "total_road_km": 83.5,
+                "cameras_per_road_km": 0.5031,
+                "area_km2": 12.4,
+                "cameras_per_km2": 3.39,
+                "provenance": {
+                    "city": TEST_CITY,
+                    "country": "SE",
+                    "network_type": "walk",
+                    "graph_hash": "deadbeef00000000",
+                    "area_source": "convex_hull_utm",
+                },
+            }
+        )
+    )
+
+    from src.api.routes import outputs
+
+    monkeypatch.setattr(outputs, "OUTPUT_BASE_DIR", base_dir)
+
+    return output_dir
+
+
+# HSR#5: parametric coverage of the five named hotspot artifact routes.
+# One declarative table = one row per artifact, so adding a future layer
+# is a single new entry rather than another copy-pasted test body.
+HOTSPOT_ROUTE_CASES = [
+    ("density.geojson", "_density.geojson", "application/geo+json"),
+    ("density_metrics.json", "_density_metrics.json", "application/json"),
+    ("gi_star.geojson", "_gi_star.geojson", "application/geo+json"),
+    ("hotspots.geojson", "_hotspots.geojson", "application/geo+json"),
+    (
+        "hotspot_polygons.geojson",
+        "_hotspot_polygons.geojson",
+        "application/geo+json",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "route_leaf,_file_suffix,content_type",
+    HOTSPOT_ROUTE_CASES,
+)
+def test_hotspot_artifact_endpoint_serves_file(
+    mock_hotspot_artifacts, route_leaf, _file_suffix, content_type
+):
+    """Each named hotspot artifact endpoint returns the file with the right MIME."""
+    response = client.get(f"/api/v1/outputs/{TEST_CITY}/{route_leaf}")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == content_type
+
+
+@pytest.mark.parametrize(
+    "route_leaf,_file_suffix,_content_type",
+    HOTSPOT_ROUTE_CASES,
+)
+def test_hotspot_artifact_endpoint_404_when_missing(
+    tmp_path, monkeypatch, route_leaf, _file_suffix, _content_type
+):
+    """
+    Missing artifact → 404 with a clear ``not found`` detail. Per-city
+    directory exists but contains no files; this is the typical
+    "ran BASIC, requested FULL artifact" path.
+    """
+    base_dir = tmp_path / "overpass_data"
+    (base_dir / TEST_CITY).mkdir(parents=True)
+
+    from src.api.routes import outputs
+
+    monkeypatch.setattr(outputs, "OUTPUT_BASE_DIR", base_dir)
+
+    response = client.get(f"/api/v1/outputs/{TEST_CITY}/{route_leaf}")
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"].lower()
+
+
+def test_density_metrics_endpoint_returns_headline_number(mock_hotspot_artifacts):
+    """
+    The density-metrics route serves valid JSON whose body carries the
+    headline ``cameras_per_road_km`` number — the field the frontend
+    pulls for its city-card tile.
+    """
+    response = client.get(f"/api/v1/outputs/{TEST_CITY}/density_metrics.json")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["cameras_per_road_km"] == pytest.approx(0.5031)
+    assert payload["provenance"]["area_source"] == "convex_hull_utm"
+
+
+def test_list_city_files_includes_all_hotspot_artifacts(mock_hotspot_artifacts):
+    """
+    ``/list`` is the entrypoint the dashboard uses to discover which
+    layers are present for a given city. All five hotspot-redesign
+    artifacts must appear by their exact on-disk filename so the
+    client-side ``findFile`` substring lookup matches.
+    """
+    response = client.get(f"/api/v1/outputs/{TEST_CITY}/list")
+    assert response.status_code == 200
+    names = {f["name"] for f in response.json()["files"]}
+
+    expected = {
+        f"{TEST_CITY}_density.geojson",
+        f"{TEST_CITY}_density_metrics.json",
+        f"{TEST_CITY}_gi_star.geojson",
+        f"{TEST_CITY}_hotspots.geojson",
+        f"{TEST_CITY}_hotspot_polygons.geojson",
+    }
+    assert expected <= names
+
+
 def test_list_city_files_includes_distribution_charts(tmp_path, monkeypatch):
     """
     Every distribution chart adopts the standardized

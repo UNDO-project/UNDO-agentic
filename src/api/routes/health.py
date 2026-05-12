@@ -38,7 +38,7 @@ async def version_info():
     :return: Version details
     """
     return VersionResponse(
-        version="2.3.0",
+        version="2.4.0",
         api_version="v1",
         description="Agentic Surveillance Research API",
     )

@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import geopandas as gpd
 import contextily as cx
 from shapely import Point
+from shapely.geometry import Polygon
 
 from src.config.logger import logger
 
@@ -142,6 +143,7 @@ def plot_sensitivity_reasons(
     ax.bar(labels, values)
     ax.set_ylabel("Count")
     ax.set_title("Camera counts vs sensitivity reasons")
+    ax.set_xticks(range(len(labels)))
     ax.set_xticklabels(labels, rotation=45, ha="right")
     fig.tight_layout()
 
@@ -317,49 +319,204 @@ def plot_manufacturer_distribution(
 def plot_hotspots(
     hotspots_file: Union[str, Path],
     output_file: Union[str, Path],
+    polygons_file: Optional[Union[str, Path]] = None,
 ) -> Path:
     """
-    Read a GeoJSON of pre‐computed hotspots (with properties.cluster_id + count)
-    and plot them against an OpenStreetMap basemap.
-    :param hotspots_file: The file produced from DBSCAN
-    :param output_file: The Path to save the chart
-    :return:
+    Plot HDBSCAN hotspots: convex-hull polygons (filled, low alpha) with
+    cluster centroids overlaid as bubbles sized by camera count.
+
+    :param hotspots_file: ``<city>_hotspots.geojson`` (Point centroids).
+    :param output_file: PNG output path.
+    :param polygons_file: Optional ``<city>_hotspot_polygons.geojson``.
+        When omitted, the function looks for a sibling file named
+        ``<stem without _hotspots>_hotspot_polygons.geojson`` and
+        renders the hulls if present. Centroids alone still render if
+        no hull file is available (e.g. degenerate clusters).
+    :return: PNG output path.
     """
-    #  load clusters
-    hf = Path(hotspots_file)
-    raw = json.loads(hf.read_text(encoding="utf-8"))
+    centroid_path = Path(hotspots_file)
+    raw = json.loads(centroid_path.read_text(encoding="utf-8"))
     feats = raw.get("features", [])
 
-    # build a GeoDataFrame in WGS84
     rows = []
     for feat in feats:
         lon, lat = feat["geometry"]["coordinates"]
-        cid = feat["properties"]["cluster_id"]
-        cnt = feat["properties"]["count"]
-        rows.append({"cluster_id": cid, "count": cnt, "geometry": Point(lon, lat)})
-    gdf = gpd.GeoDataFrame(rows, crs="EPSG:4326").to_crs(epsg=3857)
+        rows.append(
+            {
+                "cluster_id": feat["properties"]["cluster_id"],
+                "count": feat["properties"]["count"],
+                "persistence": feat["properties"].get("persistence", 0.0),
+                "geometry": Point(lon, lat),
+            }
+        )
+    centroids_gdf = gpd.GeoDataFrame(rows, crs="EPSG:4326").to_crs(epsg=3857)
 
-    # prepare figure
+    # Locate the polygons file by convention if not supplied.
+    if polygons_file is None:
+        sibling = centroid_path.with_name(
+            centroid_path.name.replace("_hotspots.geojson", "_hotspot_polygons.geojson")
+        )
+        if sibling.exists() and sibling != centroid_path:
+            polygons_file = sibling
+
+    polygons_gdf: Optional[gpd.GeoDataFrame] = None
+    if polygons_file is not None:
+        try:
+            poly_raw = json.loads(Path(polygons_file).read_text(encoding="utf-8"))
+            poly_rows = []
+            for feat in poly_raw.get("features", []):
+                geom = feat.get("geometry") or {}
+                if (geom.get("type") or "").lower() != "polygon":
+                    continue
+                ring = geom["coordinates"][0]
+                poly_rows.append(
+                    {
+                        "cluster_id": feat["properties"]["cluster_id"],
+                        "geometry": Polygon([(lon, lat) for lon, lat in ring]),
+                    }
+                )
+            if poly_rows:
+                polygons_gdf = gpd.GeoDataFrame(poly_rows, crs="EPSG:4326").to_crs(
+                    epsg=3857
+                )
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning(f"Could not read hotspot polygons {polygons_file}: {e}")
+
     fig, ax = plt.subplots(figsize=(8, 8))
-    # size bubbles by count
-    sizes = (gdf["count"] / gdf["count"].max()) * 1000  # normalize → marker size
-    gdf.plot(
+
+    if polygons_gdf is not None and not polygons_gdf.empty:
+        polygons_gdf.plot(
+            ax=ax,
+            column="cluster_id",
+            cmap="tab10",
+            alpha=0.25,
+            edgecolor="black",
+            linewidth=0.8,
+        )
+
+    # Centroid bubbles sized by camera count. Guard against a single-cluster
+    # case where ``count.max() == count.min()`` so normalization stays sane.
+    max_count = float(centroids_gdf["count"].max() or 1)
+    sizes = (centroids_gdf["count"] / max_count) * 1000
+    centroids_gdf.plot(
         ax=ax,
         column="cluster_id",
         cmap="tab10",
         markersize=sizes,
-        alpha=0.7,
+        alpha=0.85,
         edgecolor="white",
         linewidth=0.5,
         legend=True,
     )
 
-    # add Web Mercator basemap
     cx.add_basemap(ax, source=cx.providers.OpenStreetMap.Mapnik)
-
-    # save
     ax.set_axis_off()
-    ax.set_title("Surveillance hotspots")
+    ax.set_title("Surveillance hotspots (HDBSCAN)")
+    out = Path(output_file)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
+# Colour ramp shared by the choropleth and any future legend swatch.
+# Blue cold → grey not-significant → red hot, mirroring the ArcGIS /
+# QGIS "Hot Spot Analysis" convention every reader of these maps
+# expects. Order matters: GeoPandas indexes by ``categories=`` below.
+_GI_STAR_COLOURS = {
+    "cold_99": "#08519c",
+    "cold_95": "#6baed6",
+    "not_significant": "#d9d9d9",
+    "hot_95": "#fb6a4a",
+    "hot_99": "#a50f15",
+}
+
+
+def plot_gi_star(
+    gi_star_file: Union[str, Path],
+    output_file: Union[str, Path],
+) -> Optional[Path]:
+    """
+    Render the Gi* hex grid as a choropleth on an OSM basemap.
+
+    The colours follow the ArcGIS Hot Spot Analysis ramp: deep red for
+    ``hot_99`` (strongest concentrations), pale red for ``hot_95``,
+    light grey for ``not_significant``, and the matching blues for cold
+    spots. A short legend explains the bands; the plot is dropped to
+    PNG at 150 DPI to match the rest of the chart suite.
+
+    :param gi_star_file: ``<city>_gi_star.geojson`` produced by
+        :func:`src.tools.spatial_stats.write_gi_star_geojson`.
+    :param output_file: PNG output path.
+    :return: ``output_file`` on success; ``None`` if the GeoJSON has
+        no features (so the caller's cache layer can skip the
+        artifact rather than write an empty PNG).
+    """
+    src_path = Path(gi_star_file)
+    raw = json.loads(src_path.read_text(encoding="utf-8"))
+    feats = raw.get("features", [])
+    if not feats:
+        logger.info("plot_gi_star: empty GeoJSON, skipping render")
+        return None
+
+    rows = []
+    for feat in feats:
+        geom = feat.get("geometry") or {}
+        if (geom.get("type") or "").lower() != "polygon":
+            continue
+        ring = geom["coordinates"][0]
+        rows.append(
+            {
+                "category": feat["properties"].get("category", "not_significant"),
+                "count": feat["properties"].get("count", 0),
+                "gi_star_z": feat["properties"].get("gi_star_z", 0.0),
+                "p_fdr": feat["properties"].get("p_fdr", 1.0),
+                "geometry": Polygon([(lon, lat) for lon, lat in ring]),
+            }
+        )
+    if not rows:
+        logger.info("plot_gi_star: no polygon features, skipping render")
+        return None
+
+    gdf = gpd.GeoDataFrame(rows, crs="EPSG:4326").to_crs(epsg=3857)
+
+    # Map category → colour up-front so a hex with a category not in
+    # our palette (shouldn't happen, but defends against future
+    # additions) renders as the neutral grey rather than crashing.
+    gdf["colour"] = (
+        gdf["category"]
+        .map(_GI_STAR_COLOURS)
+        .fillna(_GI_STAR_COLOURS["not_significant"])
+    )
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    gdf.plot(
+        ax=ax,
+        color=gdf["colour"],
+        edgecolor="white",
+        linewidth=0.3,
+        alpha=0.75,
+    )
+
+    cx.add_basemap(ax, source=cx.providers.OpenStreetMap.Mapnik)
+    ax.set_axis_off()
+    ax.set_title("Hot-spot analysis (Gi*, FDR-adjusted)")
+
+    # Manual legend so the categories show up even when a band has no
+    # cells in this run (e.g. small cities with no cold-spots).
+    from matplotlib.patches import Patch
+
+    legend_handles = [
+        Patch(facecolor=colour, edgecolor="white", label=label.replace("_", " "))
+        for label, colour in _GI_STAR_COLOURS.items()
+    ]
+    ax.legend(
+        handles=legend_handles,
+        loc="lower left",
+        framealpha=0.9,
+        title="Category",
+    )
+
     out = Path(output_file)
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, dpi=150, bbox_inches="tight")

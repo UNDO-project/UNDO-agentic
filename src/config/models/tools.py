@@ -54,21 +54,6 @@ class ToHeatmapInput(BaseModel):
     output_html: str = Field(description="Output path for HTML heatmap file")
 
 
-class ToHotspotsInput(BaseModel):
-    """Input schema for to_hotspots tool."""
-
-    geojson_path: str = Field(
-        description="Path to GeoJSON file containing surveillance camera locations"
-    )
-    output_file: str = Field(description="Output path for hotspots GeoJSON file")
-    eps: float = Field(
-        default=0.0001, description="DBSCAN epsilon parameter in degrees (e.g., 0.0001)"
-    )
-    min_samples: int = Field(
-        default=5, description="Minimum points required to form a cluster"
-    )
-
-
 class ComputeStatisticsInput(BaseModel):
     """Input schema for compute_statistics tool."""
 

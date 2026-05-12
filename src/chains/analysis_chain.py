@@ -345,7 +345,7 @@ class AnalysisChain:
     def generate_visualizations(
         self,
         context: Dict[str, Any],
-        options: Dict[str, bool],
+        options: Dict[str, Any],
     ) -> Dict[str, Any]:
         """
         Generate requested visualizations with error recovery.
@@ -359,61 +359,247 @@ class AnalysisChain:
         :param options: Dictionary of visualization options
         :return: Updated context with visualization paths
         """
-        from src.tools.mapping_tools import to_heatmap, to_hotspots
+        from src.tools.density_kde import (
+            compute_kde,
+            write_density_geojson,
+            write_kde_heatmap_html,
+        )
+        from src.tools.hotspot_clustering import (
+            cluster_hdbscan,
+            write_centroids_geojson,
+            write_polygons_geojson,
+        )
+        from src.tools.spatial_stats import compute_gi_star, write_gi_star_geojson
+        from src.tools.density_metrics import (
+            compute_road_km_density,
+            write_density_metrics_json,
+        )
         from src.tools.stat_tools import compute_statistics
         from src.tools.chart_tools import (
             private_public_pie,
             plot_zone_sensitivity,
             plot_sensitivity_reasons,
             plot_hotspots as plot_hotspots_chart,
+            plot_gi_star as plot_gi_star_chart,
             plot_operator_distribution,
             plot_manufacturer_distribution,
             plot_install_timeline,
         )
         from src.tools.io_tools import visualization_cache_key
+        from src.config.settings import HotspotSettings
+
+        hotspot_settings = HotspotSettings()
 
         errors: list = []
         force_rerender = bool(options.get("force_rerender", False))
         raw_hash = str(context.get("raw_hash") or "")
 
-        # Generate heatmap. The filename derives from the city stem
-        # (``<city>_heatmap.html``), not from the geojson path's
-        # suffix — the ``/api/v1/outputs/{city}/map?map_type=heatmap``
-        # route serves that exact name.
+        # KDE-backed heatmap + density contours — two artifacts share one
+        # KDE pass. The filenames derive from the city stem
+        # (``<city>_heatmap.html``, ``<city>_density.geojson``), not from
+        # the geojson path's suffix — the ``/api/v1/outputs/{city}/...``
+        # routes serve those exact names. ``compute_kde`` is memoised so
+        # the second ``_cached_step`` reuses the first call's result on
+        # a cache miss.
         if options.get("generate_heatmap"):
             geojson_path = Path(context["geojson_path"])
             raw_path = Path(context["path"])
             heatmap_path = raw_path.with_name(f"{raw_path.stem}_heatmap.html")
+            density_path = raw_path.with_name(f"{raw_path.stem}_density.geojson")
+
+            kde_params = {
+                "method": "kde",
+                "bandwidth": str(hotspot_settings.kde_bandwidth),
+                "grid_resolution_m": hotspot_settings.kde_grid_resolution_m,
+            }
+
+            kde_cache: dict = {}
+
+            def _run_kde():
+                if "result" not in kde_cache:
+                    kde_cache["result"] = compute_kde(geojson_path, hotspot_settings)
+                return kde_cache["result"]
+
             out = self._cached_step(
                 vis_name="heatmap",
                 error_label="Heatmap generation",
                 artifact_path=heatmap_path,
-                cache_key=visualization_cache_key(raw_hash, "heatmap", {}),
-                fn=lambda: to_heatmap(geojson_path, heatmap_path),
+                # Cache key bumps to "heatmap_kde" so any sidecar from
+                # the legacy raw-points heatmap is invalidated on first
+                # run after upgrade.
+                cache_key=visualization_cache_key(raw_hash, "heatmap_kde", kde_params),
+                fn=lambda: write_kde_heatmap_html(_run_kde(), heatmap_path),
                 errors=errors,
                 force_rerender=force_rerender,
             )
             if out is not None:
                 context["heatmap_path"] = str(out)
 
-        # Generate hotspots GeoJSON. Filename uses the raw city stem
-        # ( ``<city>_hotspots.geojson``), not the geojson path's
-        # ``_enriched_hotspots`` infix.
+            out = self._cached_step(
+                vis_name="density contours",
+                error_label="Density contours generation",
+                artifact_path=density_path,
+                cache_key=visualization_cache_key(raw_hash, "density_kde", kde_params),
+                fn=lambda: write_density_geojson(_run_kde(), density_path),
+                errors=errors,
+                force_rerender=force_rerender,
+            )
+            if out is not None:
+                context["density_path"] = str(out)
+
+        # Generate HDBSCAN hotspots — two artifacts share one cluster
+        # pass: ``<city>_hotspots.geojson`` (centroids) and
+        # ``<city>_hotspot_polygons.geojson`` (convex hulls). We cluster
+        # once and memoise via ``_run_clustering`` so the second
+        # ``_cached_step`` reuses the first call's result on a cache miss.
         if options.get("generate_hotspots"):
             geojson_path = Path(context["geojson_path"])
             raw_path = Path(context["path"])
             hotspots_path = raw_path.with_name(f"{raw_path.stem}_hotspots.geojson")
+            polygons_path = raw_path.with_name(
+                f"{raw_path.stem}_hotspot_polygons.geojson"
+            )
+
+            # Cache key bumps to "hotspots_hdbscan" so any sidecar from
+            # the legacy DBSCAN run is invalidated and the new artifact
+            # is regenerated on first run after upgrade.
+            cluster_params = {
+                "method": "hdbscan",
+                "min_cluster_size": hotspot_settings.hdbscan_min_cluster_size,
+                "min_samples": hotspot_settings.hdbscan_min_samples,
+            }
+
+            cluster_cache: dict = {}
+
+            def _run_clustering():
+                if "result" not in cluster_cache:
+                    cluster_cache["result"] = cluster_hdbscan(
+                        geojson_path, hotspot_settings
+                    )
+                return cluster_cache["result"]
+
             out = self._cached_step(
-                vis_name="hotspots",
-                error_label="Hotspots generation",
+                vis_name="hotspot centroids",
+                error_label="Hotspot centroids generation",
                 artifact_path=hotspots_path,
-                cache_key=visualization_cache_key(raw_hash, "hotspots", {}),
-                fn=lambda: to_hotspots(geojson_path, hotspots_path),
+                cache_key=visualization_cache_key(
+                    raw_hash, "hotspots_hdbscan", cluster_params
+                ),
+                fn=lambda: write_centroids_geojson(_run_clustering(), hotspots_path),
                 errors=errors,
                 force_rerender=force_rerender,
             )
             if out is not None:
                 context["hotspots_path"] = str(out)
+
+            out = self._cached_step(
+                vis_name="hotspot polygons",
+                error_label="Hotspot polygons generation",
+                artifact_path=polygons_path,
+                cache_key=visualization_cache_key(
+                    raw_hash, "hotspot_polygons_hdbscan", cluster_params
+                ),
+                fn=lambda: write_polygons_geojson(_run_clustering(), polygons_path),
+                errors=errors,
+                force_rerender=force_rerender,
+            )
+            if out is not None:
+                context["hotspot_polygons_path"] = str(out)
+
+        # Getis-Ord Gi* hex grid — the statistical layer. One artifact
+        # (``<city>_gi_star.geojson``) gated on ``generate_gi_star``.
+        # The downstream chart (``<city>_gi_star.png``) is a separate
+        # cached step so a researcher can opt into the GeoJSON without
+        # paying for the matplotlib + contextily render.
+        if options.get("generate_gi_star"):
+            geojson_path = Path(context["geojson_path"])
+            raw_path = Path(context["path"])
+            gi_star_path = raw_path.with_name(f"{raw_path.stem}_gi_star.geojson")
+
+            gi_star_params = {
+                "method": "getis_ord_gi_star",
+                "h3_resolution": hotspot_settings.h3_resolution,
+                "p_threshold": hotspot_settings.gi_star_p_threshold,
+            }
+
+            out = self._cached_step(
+                vis_name="Gi* hex grid",
+                error_label="Gi* hex grid generation",
+                artifact_path=gi_star_path,
+                cache_key=visualization_cache_key(
+                    raw_hash, "gi_star_geojson", gi_star_params
+                ),
+                fn=lambda: write_gi_star_geojson(
+                    compute_gi_star(geojson_path, hotspot_settings),
+                    gi_star_path,
+                ),
+                errors=errors,
+                force_rerender=force_rerender,
+            )
+            if out is not None:
+                context["gi_star_path"] = str(out)
+
+        # Headline density metrics — one small JSON with the four
+        # numbers (cameras, road-km, cameras/road-km, cameras/km²).
+        # Reuses the routing agent's pedestrian-graph cache so a cold
+        # cache pays the OSMnx tax once and then both pipelines run
+        # cheap. ``country`` is a non-bool passthrough — see
+        # ``langchain_analyzer.SurveillanceAnalyzerAgent.analyze``.
+        if options.get("compute_density_metrics"):
+            geojson_path = Path(context["geojson_path"])
+            raw_path = Path(context["path"])
+            metrics_path = raw_path.with_name(f"{raw_path.stem}_density_metrics.json")
+            city = raw_path.stem
+            country = options.get("country")
+
+            from src.config.settings import RouteSettings
+
+            route_settings = RouteSettings()
+            density_params = {
+                "method": "road_km_density",
+                "network_type": route_settings.network_type,
+                "country": country,
+            }
+
+            # Memoise the actual compute call so the in-memory result
+            # is available to the report step on a cache miss, without
+            # paying a second OSMnx pass. On a hit the JSON is read
+            # straight from disk by the report path below.
+            metrics_cache: dict = {}
+
+            def _run_density():
+                if "result" not in metrics_cache:
+                    metrics_cache["result"] = compute_road_km_density(
+                        geojson_path,
+                        city=city,
+                        country=country,
+                        route_settings=route_settings,
+                    )
+                return metrics_cache["result"]
+
+            out = self._cached_step(
+                vis_name="density metrics",
+                error_label="Density metrics computation",
+                artifact_path=metrics_path,
+                cache_key=visualization_cache_key(
+                    raw_hash, "density_metrics", density_params
+                ),
+                fn=lambda: write_density_metrics_json(_run_density(), metrics_path),
+                errors=errors,
+                force_rerender=force_rerender,
+            )
+            if out is not None:
+                context["density_metrics_path"] = str(out)
+                # Surface the dict so the LLM report can quote the
+                # headline number without re-reading the JSON.
+                try:
+                    import json as _json
+
+                    context["density_metrics"] = _json.loads(
+                        Path(out).read_text(encoding="utf-8")
+                    )
+                except Exception as e:
+                    logger.warning(f"Could not reload density metrics JSON: {e}")
 
         # Compute statistics (in-memory; no artifact, no caching)
         if options.get("compute_stats", True):
@@ -503,6 +689,21 @@ class AnalysisChain:
                 if out is not None:
                     context["hotspots_chart"] = str(out)
 
+            if options.get("plot_gi_star") and "gi_star_path" in context:
+                gi_star_geojson = Path(context["gi_star_path"])
+                gi_star_chart_path = output_dir / f"{city_stem}_gi_star.png"
+                out = self._cached_step(
+                    vis_name="Gi* choropleth",
+                    error_label="Gi* choropleth chart",
+                    artifact_path=gi_star_chart_path,
+                    cache_key=visualization_cache_key(raw_hash, "gi_star_chart", {}),
+                    fn=lambda: plot_gi_star_chart(gi_star_geojson, gi_star_chart_path),
+                    errors=errors,
+                    force_rerender=force_rerender,
+                )
+                if out is not None:
+                    context["gi_star_chart"] = str(out)
+
             if options.get("plot_operator_distribution"):
                 op_filename = f"{city_stem}_operator_distribution.png"
                 op_path = output_dir / op_filename
@@ -573,17 +774,33 @@ class AnalysisChain:
                         and isinstance(el.get("analysis"), dict)
                         and el["analysis"].get("sensitive")
                     ]
-                    markdown = self.llm.generate_city_report(context["stats"], sample)
+                    markdown = self.llm.generate_city_report(
+                        context["stats"],
+                        sample,
+                        density_metrics=context.get("density_metrics"),
+                    )
                     report_path.write_text(markdown, encoding="utf-8")
                     # Truthy return so ``_cached_step`` doesn't treat the
                     # implicit ``None`` as an opt-out.
                     return report_path
 
+                # Include a hash of the density metric in the cache key
+                # so adding the road-km figure to a city that already
+                # has a cached report triggers a rebuild rather than
+                # serving the older metrics-free version.
+                report_params = {
+                    "has_density_metrics": context.get("density_metrics") is not None,
+                    "cameras_per_road_km": (
+                        context.get("density_metrics", {}) or {}
+                    ).get("cameras_per_road_km"),
+                }
                 out = self._cached_step(
                     vis_name="city report",
                     error_label="City report generation",
                     artifact_path=report_path,
-                    cache_key=visualization_cache_key(raw_hash, "city_report", {}),
+                    cache_key=visualization_cache_key(
+                        raw_hash, "city_report", report_params
+                    ),
                     fn=_generate_report,
                     errors=errors,
                     force_rerender=force_rerender,

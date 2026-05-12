@@ -79,6 +79,14 @@ class PipelineConfig(BaseModel):
     generate_hotspots: bool = Field(
         default=False, description="Generate hotspot clusters"
     )
+    generate_gi_star: bool = Field(
+        default=False,
+        description=(
+            "Generate Getis-Ord Gi* hot-spot analysis on an H3 hex grid "
+            "(<city>_gi_star.geojson). Independent of generate_hotspots — "
+            "the two layers answer different questions."
+        ),
+    )
     compute_stats: bool = Field(default=True, description="Compute statistics")
     generate_chart: bool = Field(default=False, description="Generate pie chart")
     plot_zone_sensitivity: bool = Field(
@@ -89,6 +97,13 @@ class PipelineConfig(BaseModel):
     )
     plot_hotspots: bool = Field(
         default=False, description="Plot hotspots visualization"
+    )
+    plot_gi_star: bool = Field(
+        default=False,
+        description=(
+            "Render the Gi* hex grid as a choropleth (<city>_gi_star.png). "
+            "Depends on generate_gi_star for the underlying GeoJSON."
+        ),
     )
     plot_operator_distribution: bool = Field(
         default=False,
@@ -109,6 +124,15 @@ class PipelineConfig(BaseModel):
             "summarizing the city's surveillance posture. Depends on "
             "compute_stats=True; failures land in visualization_errors "
             "and never abort the run."
+        ),
+    )
+    compute_density_metrics: bool = Field(
+        default=True,
+        description=(
+            "Compute headline cameras-per-road-km + cameras-per-km² and "
+            "emit <city>_density_metrics.json. Reuses the pedestrian "
+            "graph cached by the routing agent; on a cold cache the "
+            "first run downloads it. Cheap enough to default on."
         ),
     )
 
@@ -167,15 +191,18 @@ class PipelineConfig(BaseModel):
                 generate_geojson=True,
                 generate_heatmap=True,
                 generate_hotspots=True,
+                generate_gi_star=True,
                 compute_stats=True,
                 generate_chart=True,
                 plot_zone_sensitivity=True,
                 plot_sensitivity_reasons=True,
                 plot_hotspots=True,
+                plot_gi_star=True,
                 plot_operator_distribution=True,
                 plot_manufacturer_distribution=True,
                 plot_install_timeline=True,
                 generate_report=True,
+                compute_density_metrics=True,
             )
 
         # BASIC baseline: enriched data + stats, no charts or maps.
@@ -195,14 +222,17 @@ class PipelineConfig(BaseModel):
             "generate_geojson": self.generate_geojson,
             "generate_heatmap": self.generate_heatmap,
             "generate_hotspots": self.generate_hotspots,
+            "generate_gi_star": self.generate_gi_star,
             "compute_stats": self.compute_stats,
             "generate_chart": self.generate_chart,
             "plot_zone_sensitivity": self.plot_zone_sensitivity,
             "plot_sensitivity_reasons": self.plot_sensitivity_reasons,
             "plot_hotspots": self.plot_hotspots,
+            "plot_gi_star": self.plot_gi_star,
             "plot_operator_distribution": self.plot_operator_distribution,
             "plot_manufacturer_distribution": self.plot_manufacturer_distribution,
             "plot_install_timeline": self.plot_install_timeline,
             "generate_report": self.generate_report,
+            "compute_density_metrics": self.compute_density_metrics,
             "force_rerender": self.force_rerender,
         }

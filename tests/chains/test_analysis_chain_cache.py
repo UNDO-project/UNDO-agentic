@@ -29,8 +29,12 @@ class _StubLLM:
         self.calls: list = []
         self._response = response
 
-    def generate_city_report(self, stats: dict, sample: list) -> str:
-        self.calls.append({"stats": stats, "sample": sample})
+    def generate_city_report(
+        self, stats: dict, sample: list, density_metrics: dict = None
+    ) -> str:
+        self.calls.append(
+            {"stats": stats, "sample": sample, "density_metrics": density_metrics}
+        )
         return self._response
 
 
@@ -153,35 +157,54 @@ def test_writes_sidecar_next_to_artifact(tmp_path):
 
 def test_heatmap_step_caches_after_first_run(tmp_path):
     """
-    The chart helper is patched so we can count invocations directly.
-    First run calls it once and writes the sidecar; second run sees the
-    cache hit and skips the call entirely.
-
-    The expected filename is ``<city>_heatmap.html`` (HF#1) — that's
-    what ``/api/v1/outputs/{city}/map?map_type=heatmap`` serves.
+    The KDE-backed heatmap step writes two artifacts from one density
+    pass: ``<city>_heatmap.html`` and ``<city>_density.geojson``. We
+    patch ``compute_kde`` (the expensive bit) and the two writers so we
+    can count invocations. First run computes the KDE once and writes
+    both files; second run sees both sidecars and skips everything.
     """
     chain = _make_chain(_StubLLM())
     ctx = _ctx(tmp_path)
     options = {"compute_stats": False, "generate_heatmap": True}
 
-    expected_path = tmp_path / "lund_heatmap.html"
+    expected_html = tmp_path / "lund_heatmap.html"
+    expected_density = tmp_path / "lund_density.geojson"
 
-    def _fake_heatmap(geojson_path, output_html, *args, **kwargs):
+    def _fake_html(_result, output_html, *args, **kwargs):
         Path(output_html).write_text("<html>fake heatmap</html>", encoding="utf-8")
         return Path(output_html)
 
-    with patch(
-        "src.tools.mapping_tools.to_heatmap", side_effect=_fake_heatmap
-    ) as mock_heatmap:
+    def _fake_density(_result, output_file):
+        Path(output_file).write_text(
+            '{"type":"FeatureCollection","features":[]}', encoding="utf-8"
+        )
+        return Path(output_file)
+
+    with (
+        patch("src.tools.density_kde.compute_kde", return_value=object()) as mock_kde,
+        patch(
+            "src.tools.density_kde.write_kde_heatmap_html", side_effect=_fake_html
+        ) as mock_html,
+        patch(
+            "src.tools.density_kde.write_density_geojson", side_effect=_fake_density
+        ) as mock_density,
+    ):
         out1 = chain.generate_visualizations(dict(ctx), options)
-        assert out1.get("heatmap_path") == str(expected_path)
-        assert mock_heatmap.call_count == 1
+        assert out1.get("heatmap_path") == str(expected_html)
+        assert out1.get("density_path") == str(expected_density)
+        assert mock_kde.call_count == 1, "KDE must compute exactly once per run"
+        assert mock_html.call_count == 1
+        assert mock_density.call_count == 1
         # Filename contract honoured: not ``lund_enriched.html``.
-        assert expected_path.exists()
+        assert expected_html.exists()
+        assert expected_density.exists()
         assert not (tmp_path / "lund_enriched.html").exists()
 
         out2 = chain.generate_visualizations(dict(ctx), options)
-        assert out2.get("heatmap_path") == str(expected_path)
-        assert mock_heatmap.call_count == 1, (
-            "Cache hit: to_heatmap must not run on the second invocation"
+        assert out2.get("heatmap_path") == str(expected_html)
+        assert out2.get("density_path") == str(expected_density)
+        assert mock_kde.call_count == 1, (
+            "Cache hit: compute_kde must not run on the second invocation"
         )
+        assert mock_html.call_count == 1
+        assert mock_density.call_count == 1

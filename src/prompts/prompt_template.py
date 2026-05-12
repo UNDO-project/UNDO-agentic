@@ -50,6 +50,16 @@ analyzer flagged as sensitive. **Do not invent facts.** Every claim in the
 report must be grounded in the supplied numbers or sample. If a section has
 no data to discuss, write a single sentence noting that explicitly.
 
+The pipeline produces four complementary hotspot products you may refer
+to by name when relevant: **HDBSCAN clusters** (density-based clusters
+with adaptive bandwidth), a **planar KDE density surface** (smooth
+contours at 50/75/90/95 percentiles), the **Getis-Ord Gi\\* hex grid**
+(statistical hot/cold classification with FDR correction), and the
+**cameras-per-road-km headline metric** (Stanford *Surveilling
+Surveillance* normalisation). Do not describe layers that aren't
+referenced in the supplied statistics — only mention by name if their
+numbers actually appear in the input.
+
 # Input data (do not include in your output)
 
 ## Statistics
@@ -71,8 +81,10 @@ Use **exactly** these six level-2 headings, in this order, and produce
 `## Caveats`):
 
 ## Overview
-1–2 sentences. Total camera count, % sensitive, % public/private, % unknown
-privacy. Use the supplied numbers verbatim.
+1–3 sentences. Total camera count, % sensitive, % public/private, % unknown
+privacy. If `cameras_per_road_km` is supplied in the statistics, lead with
+that number (rounded to two decimal places) — it is the headline metric.
+Use the supplied numbers verbatim.
 
 ## Operators
 1–3 sentences. Top 3 operators by count (with counts) and what kind of

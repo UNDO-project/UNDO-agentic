@@ -61,7 +61,17 @@ Examples:
         default=None,
         help=(
             "Override the preset for hotspot generation. Toggles both the "
-            "DBSCAN clustering output and the matplotlib plot together."
+            "HDBSCAN clustering output and the matplotlib plot together."
+        ),
+    )
+    parser.add_argument(
+        "--gi-star",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        dest="gi_star",
+        help=(
+            "Override the preset for the Getis-Ord Gi* hex-grid layer. "
+            "Toggles both the GeoJSON artifact and the choropleth chart."
         ),
     )
     parser.add_argument(
@@ -82,6 +92,18 @@ Examples:
         help=(
             "Override the preset for the LLM-written markdown city report "
             "(--report / --no-report)."
+        ),
+    )
+    parser.add_argument(
+        "--density-metrics",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        dest="density_metrics",
+        help=(
+            "Override the preset for the cameras-per-road-km headline "
+            "metric (--density-metrics / --no-density-metrics). Defaults "
+            "on for both BASIC and FULL presets — opt out when you don't "
+            "want to touch the OSMnx graph cache."
         ),
     )
     parser.add_argument(
@@ -260,6 +282,12 @@ def display_results(results: dict):
         elif analyze.get("success"):
             elements = analyze.get("element_count", 0)
             table.add_row("Elements Analyzed", f"[green]{elements}[/green]")
+            metrics = analyze.get("density_metrics") or {}
+            if metrics.get("cameras_per_road_km") is not None:
+                table.add_row(
+                    "Cameras / road-km",
+                    f"[green]{metrics['cameras_per_road_km']:.3f}[/green]",
+                )
         else:
             table.add_row(
                 "Analysis", f"[red]Failed: {analyze.get('error', 'Unknown')}[/red]"
@@ -306,6 +334,12 @@ def display_results(results: dict):
             files_table.add_row("Hotspots Data", str(analyze["hotspots_path"]))
         if analyze.get("plot_hotspots"):
             files_table.add_row("Hotspots Plot", str(analyze["plot_hotspots"]))
+        if analyze.get("gi_star_path"):
+            files_table.add_row("Gi* GeoJSON", str(analyze["gi_star_path"]))
+        if analyze.get("gi_star_chart"):
+            files_table.add_row("Gi* Plot", str(analyze["gi_star_chart"]))
+        if analyze.get("density_metrics_path"):
+            files_table.add_row("Density Metrics", str(analyze["density_metrics_path"]))
         if analyze.get("chart_path"):
             files_table.add_row("Statistics Chart", str(analyze["chart_path"]))
 
@@ -372,6 +406,9 @@ def main():
     if args.hotspots is not None:
         config_kwargs["generate_hotspots"] = args.hotspots
         config_kwargs["plot_hotspots"] = args.hotspots
+    if args.gi_star is not None:
+        config_kwargs["generate_gi_star"] = args.gi_star
+        config_kwargs["plot_gi_star"] = args.gi_star
     if args.charts is not None:
         config_kwargs["generate_chart"] = args.charts
         config_kwargs["plot_zone_sensitivity"] = args.charts
@@ -381,6 +418,8 @@ def main():
         config_kwargs["plot_install_timeline"] = args.charts
     if args.report is not None:
         config_kwargs["generate_report"] = args.report
+    if args.density_metrics is not None:
+        config_kwargs["compute_density_metrics"] = args.density_metrics
 
     # Routing configuration
     if args.enable_routing:

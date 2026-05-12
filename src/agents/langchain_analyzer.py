@@ -90,6 +90,7 @@ class SurveillanceAnalyzerAgent:
             "generate_geojson": input_data.get("generate_geojson", True),
             "generate_heatmap": input_data.get("generate_heatmap", False),
             "generate_hotspots": input_data.get("generate_hotspots", False),
+            "generate_gi_star": input_data.get("generate_gi_star", False),
             "compute_stats": input_data.get("compute_stats", True),
             "generate_chart": input_data.get("generate_chart", False),
             "plot_zone_sensitivity": input_data.get("plot_zone_sensitivity", False),
@@ -97,6 +98,7 @@ class SurveillanceAnalyzerAgent:
                 "plot_sensitivity_reasons", False
             ),
             "plot_hotspots": input_data.get("plot_hotspots", False),
+            "plot_gi_star": input_data.get("plot_gi_star", False),
             "plot_operator_distribution": input_data.get(
                 "plot_operator_distribution", False
             ),
@@ -105,7 +107,12 @@ class SurveillanceAnalyzerAgent:
             ),
             "plot_install_timeline": input_data.get("plot_install_timeline", False),
             "generate_report": input_data.get("generate_report", False),
+            "compute_density_metrics": input_data.get("compute_density_metrics", False),
             "force_rerender": input_data.get("force_rerender", False),
+            # Non-bool passthrough used by the density-metrics step to
+            # reach the routing agent's graph cache. ``None`` is fine —
+            # OSMnx will geocode the city name alone.
+            "country": input_data.get("country"),
         }
 
         try:
@@ -133,6 +140,12 @@ class SurveillanceAnalyzerAgent:
                 response["heatmap_path"] = result["heatmap_path"]
             if "hotspots_path" in result:
                 response["hotspots_path"] = result["hotspots_path"]
+            if "hotspot_polygons_path" in result:
+                response["hotspot_polygons_path"] = result["hotspot_polygons_path"]
+            if "density_path" in result:
+                response["density_path"] = result["density_path"]
+            if "gi_star_path" in result:
+                response["gi_star_path"] = result["gi_star_path"]
             if "stats" in result:
                 response["stats"] = result["stats"]
             if "pie_chart_path" in result:
@@ -145,6 +158,8 @@ class SurveillanceAnalyzerAgent:
                 ]
             if "hotspots_chart" in result:
                 response["hotspots_chart"] = result["hotspots_chart"]
+            if "gi_star_chart" in result:
+                response["gi_star_chart"] = result["gi_star_chart"]
             if "operator_chart_path" in result:
                 response["operator_chart_path"] = result["operator_chart_path"]
             if "manufacturer_chart_path" in result:
@@ -155,6 +170,10 @@ class SurveillanceAnalyzerAgent:
                 ]
             if "report_path" in result:
                 response["report_path"] = result["report_path"]
+            if "density_metrics_path" in result:
+                response["density_metrics_path"] = result["density_metrics_path"]
+            if "density_metrics" in result:
+                response["density_metrics"] = result["density_metrics"]
 
             # Add visualization errors if any
             if "visualization_errors" in result:

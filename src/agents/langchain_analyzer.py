@@ -107,7 +107,12 @@ class SurveillanceAnalyzerAgent:
             ),
             "plot_install_timeline": input_data.get("plot_install_timeline", False),
             "generate_report": input_data.get("generate_report", False),
+            "compute_density_metrics": input_data.get("compute_density_metrics", False),
             "force_rerender": input_data.get("force_rerender", False),
+            # Non-bool passthrough used by the density-metrics step to
+            # reach the routing agent's graph cache. ``None`` is fine —
+            # OSMnx will geocode the city name alone.
+            "country": input_data.get("country"),
         }
 
         try:
@@ -165,6 +170,10 @@ class SurveillanceAnalyzerAgent:
                 ]
             if "report_path" in result:
                 response["report_path"] = result["report_path"]
+            if "density_metrics_path" in result:
+                response["density_metrics_path"] = result["density_metrics_path"]
+            if "density_metrics" in result:
+                response["density_metrics"] = result["density_metrics"]
 
             # Add visualization errors if any
             if "visualization_errors" in result:

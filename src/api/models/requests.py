@@ -73,6 +73,13 @@ class OutputOverrides(BaseModel):
         default=None,
         description="Generate an LLM-written markdown city report (<city>_report.md)",
     )
+    compute_density_metrics: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Compute the cameras-per-road-km headline metric "
+            "(<city>_density_metrics.json)."
+        ),
+    )
 
 
 class ScrapeRequest(BaseModel):

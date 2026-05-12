@@ -20,6 +20,19 @@ The pipeline consists of three main agents:
 - **Comprehensive visualizations**: Heatmaps, hotspots, route maps, and statistical charts
 - **Spatial optimization**: Efficient GeoDataFrame indexing for large camera datasets
 
+## Hotspot methodology
+
+`v2.4.0` ships a four-layer hotspot analysis. Each layer answers a different question — they complement rather than replace each other.
+
+1. **HDBSCAN clusters** (`<city>_hotspots.geojson` + `<city>_hotspot_polygons.geojson`)
+   Density-based clustering with locally-adaptive `ε`, computed in UTM metres so a "20-metre cluster" means the same thing at any latitude. Replaces the prior single-`ε` DBSCAN, which fused downtown into one blob and missed sparser suburban clusters (cf. GraphTrace 2025 urban-analytics benchmarks).
+2. **Planar KDE density surface** (`<city>_heatmap.html` + `<city>_density.geojson`)
+   FFT-based kernel density on a metric grid; the folium heatmap is *derived* from the surface rather than from folium's opaque built-in interpolation, and the same surface contours into a GeoJSON layer at the 50/75/90/95 percentiles for researcher-grade work.
+3. **Getis-Ord Gi\* hex grid** (`<city>_gi_star.geojson` + `<city>_gi_star.png`)
+   The spatial statistic researchers and journalists know from ArcGIS/QGIS "Hot Spot Analysis": per-hex z-score, FDR-adjusted p-value, and a five-class hot/cold classification — the defensible statistical layer per Amnesty's [*Decode Surveillance NYC*](https://decoders.amnesty.org/projects/decode-surveillance) methodology.
+4. **Cameras per road-km** (`<city>_density_metrics.json`)
+   The single citable headline number Stanford's [*Surveilling Surveillance*](https://reglab.stanford.edu/projects/surveilling-surveillance/) (2021) made canonical for cross-city comparison. Normalises by the pedestrian network humans actually use, neutralising the park/water/industrial-zone bias of cameras/km². Reuses the routing agent's cached OSMnx graph.
+
 # Installation
 
 ## Prerequisites

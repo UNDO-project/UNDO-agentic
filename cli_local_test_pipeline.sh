@@ -90,6 +90,11 @@ pytest tests/tools/test_spatial_stats.py
 echo "Done..."
 echo "==============================================="
 
+echo "Running density-metrics tests (cameras-per-road-km)"
+pytest tests/tools/test_density_metrics.py
+echo "Done..."
+echo "==============================================="
+
 echo "Running chart tools tests"
 pytest tests/tools/test_chart_tools.py
 echo "Done..."

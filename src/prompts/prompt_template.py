@@ -50,6 +50,16 @@ analyzer flagged as sensitive. **Do not invent facts.** Every claim in the
 report must be grounded in the supplied numbers or sample. If a section has
 no data to discuss, write a single sentence noting that explicitly.
 
+The pipeline produces four complementary hotspot products you may refer
+to by name when relevant: **HDBSCAN clusters** (density-based clusters
+with adaptive bandwidth), a **planar KDE density surface** (smooth
+contours at 50/75/90/95 percentiles), the **Getis-Ord Gi\\* hex grid**
+(statistical hot/cold classification with FDR correction), and the
+**cameras-per-road-km headline metric** (Stanford *Surveilling
+Surveillance* normalisation). Do not describe layers that aren't
+referenced in the supplied statistics — only mention by name if their
+numbers actually appear in the input.
+
 # Input data (do not include in your output)
 
 ## Statistics

@@ -209,6 +209,79 @@ async def get_city_charts(city: str, chart: str):
     )
 
 
+#: Hotspot-redesign artifacts addressable by name.
+#:
+#: Each entry maps the URL leaf the frontend uses to the on-disk filename
+#: the analyzer chain writes. Two reasons for keeping this as a single
+#: declarative dict rather than five hand-rolled handlers:
+#: 1. The dashboard's layer-toggle UI iterates the names server-side via
+#:    ``/list``; the names here must match those filenames byte-for-byte
+#:    or the toggle goes dead.
+#: 2. The set grows together keeping the registry literal avoids the next layer
+#:    being silently added to ``/list`` but missing a dedicated route.
+_HOTSPOT_ARTIFACTS: dict = {
+    "density.geojson": "_density.geojson",
+    "density_metrics.json": "_density_metrics.json",
+    "gi_star.geojson": "_gi_star.geojson",
+    "hotspots.geojson": "_hotspots.geojson",
+    "hotspot_polygons.geojson": "_hotspot_polygons.geojson",
+}
+
+
+def _serve_named_artifact(city: str, suffix: str) -> FileResponse:
+    """
+    Resolve ``<city><suffix>`` inside the per-city directory and serve it.
+
+    Centralises the validate-then-stream dance so each artifact handler
+    is one line. ``suffix`` is the literal trailing chunk after the
+    city stem (e.g. ``"_density.geojson"``), matching the analyzer
+    chain's filename construction at the call site.
+    """
+    base = resolve_city_base(city)
+    file_path = base / f"{city}{suffix}"
+    validate_path(file_path)
+    return FileResponse(
+        path=file_path,
+        media_type=get_mime_type(file_path),
+        filename=file_path.name,
+    )
+
+
+@router.get("/{city}/density.geojson")
+async def get_city_density_geojson(city: str):
+    """Serve the KDE density contours: ``<city>_density.geojson``."""
+    return _serve_named_artifact(city, _HOTSPOT_ARTIFACTS["density.geojson"])
+
+
+@router.get("/{city}/density_metrics.json")
+async def get_city_density_metrics(city: str):
+    """Serve the headline density metric: ``<city>_density_metrics.json``."""
+    return _serve_named_artifact(city, _HOTSPOT_ARTIFACTS["density_metrics.json"])
+
+
+@router.get("/{city}/gi_star.geojson")
+async def get_city_gi_star_geojson(city: str):
+    """Serve the Getis-Ord Gi* hex grid: ``<city>_gi_star.geojson``."""
+    return _serve_named_artifact(city, _HOTSPOT_ARTIFACTS["gi_star.geojson"])
+
+
+@router.get("/{city}/hotspots.geojson")
+async def get_city_hotspots_geojson(city: str):
+    """
+    Serve the HDBSCAN cluster centroids:
+    ``<city>_hotspots.geojson``. Same filename as the prior DBSCAN
+    artifact — the schema underneath is the new one
+    (``cluster_id``/``count``/``persistence``).
+    """
+    return _serve_named_artifact(city, _HOTSPOT_ARTIFACTS["hotspots.geojson"])
+
+
+@router.get("/{city}/hotspot_polygons.geojson")
+async def get_city_hotspot_polygons_geojson(city: str):
+    """Serve the HDBSCAN convex hulls: ``<city>_hotspot_polygons.geojson``."""
+    return _serve_named_artifact(city, _HOTSPOT_ARTIFACTS["hotspot_polygons.geojson"])
+
+
 @router.get("/{city}/report")
 async def get_city_report(city: str):
     """

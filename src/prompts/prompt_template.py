@@ -71,8 +71,10 @@ Use **exactly** these six level-2 headings, in this order, and produce
 `## Caveats`):
 
 ## Overview
-1–2 sentences. Total camera count, % sensitive, % public/private, % unknown
-privacy. Use the supplied numbers verbatim.
+1–3 sentences. Total camera count, % sensitive, % public/private, % unknown
+privacy. If `cameras_per_road_km` is supplied in the statistics, lead with
+that number (rounded to two decimal places) — it is the headline metric.
+Use the supplied numbers verbatim.
 
 ## Operators
 1–3 sentences. Top 3 operators by count (with counts) and what kind of

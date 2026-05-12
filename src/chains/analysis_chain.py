@@ -345,7 +345,7 @@ class AnalysisChain:
     def generate_visualizations(
         self,
         context: Dict[str, Any],
-        options: Dict[str, bool],
+        options: Dict[str, Any],
     ) -> Dict[str, Any]:
         """
         Generate requested visualizations with error recovery.
@@ -370,6 +370,10 @@ class AnalysisChain:
             write_polygons_geojson,
         )
         from src.tools.spatial_stats import compute_gi_star, write_gi_star_geojson
+        from src.tools.density_metrics import (
+            compute_road_km_density,
+            write_density_metrics_json,
+        )
         from src.tools.stat_tools import compute_statistics
         from src.tools.chart_tools import (
             private_public_pie,
@@ -534,6 +538,68 @@ class AnalysisChain:
             )
             if out is not None:
                 context["gi_star_path"] = str(out)
+
+        # Headline density metrics — one small JSON with the four
+        # numbers (cameras, road-km, cameras/road-km, cameras/km²).
+        # Reuses the routing agent's pedestrian-graph cache so a cold
+        # cache pays the OSMnx tax once and then both pipelines run
+        # cheap. ``country`` is a non-bool passthrough — see
+        # ``langchain_analyzer.SurveillanceAnalyzerAgent.analyze``.
+        if options.get("compute_density_metrics"):
+            geojson_path = Path(context["geojson_path"])
+            raw_path = Path(context["path"])
+            metrics_path = raw_path.with_name(f"{raw_path.stem}_density_metrics.json")
+            city = raw_path.stem
+            country = options.get("country")
+
+            from src.config.settings import RouteSettings
+
+            route_settings = RouteSettings()
+            density_params = {
+                "method": "road_km_density",
+                "network_type": route_settings.network_type,
+                "country": country,
+            }
+
+            # Memoise the actual compute call so the in-memory result
+            # is available to the report step on a cache miss, without
+            # paying a second OSMnx pass. On a hit the JSON is read
+            # straight from disk by the report path below.
+            metrics_cache: dict = {}
+
+            def _run_density():
+                if "result" not in metrics_cache:
+                    metrics_cache["result"] = compute_road_km_density(
+                        geojson_path,
+                        city=city,
+                        country=country,
+                        route_settings=route_settings,
+                    )
+                return metrics_cache["result"]
+
+            out = self._cached_step(
+                vis_name="density metrics",
+                error_label="Density metrics computation",
+                artifact_path=metrics_path,
+                cache_key=visualization_cache_key(
+                    raw_hash, "density_metrics", density_params
+                ),
+                fn=lambda: write_density_metrics_json(_run_density(), metrics_path),
+                errors=errors,
+                force_rerender=force_rerender,
+            )
+            if out is not None:
+                context["density_metrics_path"] = str(out)
+                # Surface the dict so the LLM report can quote the
+                # headline number without re-reading the JSON.
+                try:
+                    import json as _json
+
+                    context["density_metrics"] = _json.loads(
+                        Path(out).read_text(encoding="utf-8")
+                    )
+                except Exception as e:
+                    logger.warning(f"Could not reload density metrics JSON: {e}")
 
         # Compute statistics (in-memory; no artifact, no caching)
         if options.get("compute_stats", True):
@@ -708,17 +774,33 @@ class AnalysisChain:
                         and isinstance(el.get("analysis"), dict)
                         and el["analysis"].get("sensitive")
                     ]
-                    markdown = self.llm.generate_city_report(context["stats"], sample)
+                    markdown = self.llm.generate_city_report(
+                        context["stats"],
+                        sample,
+                        density_metrics=context.get("density_metrics"),
+                    )
                     report_path.write_text(markdown, encoding="utf-8")
                     # Truthy return so ``_cached_step`` doesn't treat the
                     # implicit ``None`` as an opt-out.
                     return report_path
 
+                # Include a hash of the density metric in the cache key
+                # so adding the road-km figure to a city that already
+                # has a cached report triggers a rebuild rather than
+                # serving the older metrics-free version.
+                report_params = {
+                    "has_density_metrics": context.get("density_metrics") is not None,
+                    "cameras_per_road_km": (
+                        context.get("density_metrics", {}) or {}
+                    ).get("cameras_per_road_km"),
+                }
                 out = self._cached_step(
                     vis_name="city report",
                     error_label="City report generation",
                     artifact_path=report_path,
-                    cache_key=visualization_cache_key(raw_hash, "city_report", {}),
+                    cache_key=visualization_cache_key(
+                        raw_hash, "city_report", report_params
+                    ),
                     fn=_generate_report,
                     errors=errors,
                     force_rerender=force_rerender,

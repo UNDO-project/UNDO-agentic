@@ -20,18 +20,88 @@ The pipeline consists of three main agents:
 - **Comprehensive visualizations**: Heatmaps, hotspots, route maps, and statistical charts
 - **Spatial optimization**: Efficient GeoDataFrame indexing for large camera datasets
 
-## Hotspot methodology
+## Methodology
 
-`v2.4.0` ships a four-layer hotspot analysis. Each layer answers a different question — they complement rather than replace each other.
+The pipeline composes several established methods rather than inventing new ones. Each subsection below lists what the codebase does, the file it lives in, and the canonical reference for that step. Full bibliographic entries are collected in [References](#references).
 
-1. **HDBSCAN clusters** (`<city>_hotspots.geojson` + `<city>_hotspot_polygons.geojson`)
-   Density-based clustering with locally-adaptive `ε`, computed in UTM metres so a "20-metre cluster" means the same thing at any latitude. Replaces the prior single-`ε` DBSCAN, which fused downtown into one blob and missed sparser suburban clusters (cf. GraphTrace 2025 urban-analytics benchmarks).
-2. **Planar KDE density surface** (`<city>_heatmap.html` + `<city>_density.geojson`)
-   FFT-based kernel density on a metric grid; the folium heatmap is *derived* from the surface rather than from folium's opaque built-in interpolation, and the same surface contours into a GeoJSON layer at the 50/75/90/95 percentiles for researcher-grade work.
-3. **Getis-Ord Gi\* hex grid** (`<city>_gi_star.geojson` + `<city>_gi_star.png`)
-   The spatial statistic researchers and journalists know from ArcGIS/QGIS "Hot Spot Analysis": per-hex z-score, FDR-adjusted p-value, and a five-class hot/cold classification — the defensible statistical layer per Amnesty's [*Decode Surveillance NYC*](https://decoders.amnesty.org/projects/decode-surveillance) methodology.
-4. **Cameras per road-km** (`<city>_density_metrics.json`)
-   The single citable headline number Stanford's [*Surveilling Surveillance*](https://reglab.stanford.edu/projects/surveilling-surveillance/) (2021) made canonical for cross-city comparison. Normalises by the pedestrian network humans actually use, neutralising the park/water/industrial-zone bias of cameras/km². Reuses the routing agent's cached OSMnx graph.
+### Data acquisition
+
+Camera locations are pulled from OpenStreetMap via the Overpass API (`src/agents/surveillance_data_collector.py`, `src/tools/surveillance_data_collector_tools.py`). The query targets `man_made=surveillance` features within a city's bounding box. Provenance: the underlying data is volunteered geographic information licensed under the ODbL.
+
+### LLM enrichment
+
+A LangChain analysis chain (`src/chains/analysis_chain.py`, `src/llm/surveillance_llm.py`, `src/prompts/prompt_template.py`) classifies each camera's privacy impact, sensitivity, and zone type, and produces the per-city report. The model is served locally by Ollama (default: `llama3:latest`). The enrichment layer is interpretive scaffolding.
+
+### Hotspot analysis (four layers)
+
+Each layer answers a different question — they complement rather than replace each other. All four project points to the local UTM zone before any metric computation (`src/tools/geo_projection.py`), so thresholds are isotropic in metres rather than degrees of latitude.
+
+1. **HDBSCAN clusters** (`<city>_hotspots.geojson` + `<city>_hotspot_polygons.geojson`, `src/tools/hotspot_clustering.py`)
+   Density-based clustering with locally-adaptive `ε`, computed in UTM metres so a "20-metre cluster" means the same thing at any latitude. See [Campello et al. 2013][campello2013], [McInnes et al. 2017][mcinnes2017].
+2. **Planar KDE density surface** (`<city>_heatmap.html` + `<city>_density.geojson`, `src/tools/density_kde.py`)
+   FFT-based Gaussian kernel density on a metric grid via [KDEpy][kdepy]; the folium heatmap is *derived* from the surface rather than from folium's opaque built-in interpolation, and the same surface contours into a GeoJSON layer at the 50/75/90/95 percentiles for researcher-grade work. The current implementation is planar — kernels radiate isotropically in 2-D; a network-constrained variant ([Okabe & Sugihara 2012][okabe2012]) is planned. See also [Silverman 1986][silverman1986], [Wand & Jones 1995][wand1995].
+3. **Getis-Ord Gi\* hex grid** (`<city>_gi_star.geojson` + `<city>_gi_star.png`, `src/tools/spatial_stats.py`)
+   Points are binned to an [H3 hexagonal grid][h3]; a distance-band spatial weights matrix is built on hex centroids in UTM metres ([`libpysal.weights.DistanceBand`][pysal]); per-hex Gi\* z-scores are computed with [`esda.G_Local`][esda] (`star=True`); p-values are corrected with Benjamini–Hochberg FDR; each hex is then classified `hot_99` / `hot_95` / `not_significant` / `cold_95` / `cold_99` — the ArcGIS/QGIS "Hot Spot Analysis" convention. See [Getis & Ord 1992][getis1992], [Ord & Getis 1995][ord1995], [Benjamini & Hochberg 1995][bh1995], [Rey & Anselin 2007][rey2007], [Wolf et al. 2021][wolf2021], [Brodsky 2018][brodsky2018]. Amnesty International's [*Decode Surveillance NYC*][amnesty] is the methodological precedent for crowdsourced camera-mapping research that this statistical layer is meant to support.
+4. **Cameras per road-km** (`<city>_density_metrics.json`, `src/tools/density_metrics.py`)
+   Stanford Computational Policy Lab's [*Surveilling Surveillance*][stanford2021] (2021) made cameras-per-linear-km of road the canonical headline for cross-city camera prevalence (0.2 in Los Angeles to 0.9 in Seoul). The motivation is that `cameras / km²` is sensitive to how much park, water, or other unbuilt land falls inside a city's polygon — those areas inflate the denominator without contributing cameras to the numerator. Normalising by road length compares infrastructure to infrastructure. This project follows that approach but uses the **OSMnx pedestrian graph** (rather than all roads), since the question we care about is what someone walking past gets exposed to. Reuses the routing agent's cached graph so the metric and routing layer share one OSM download. A secondary `cameras / km²` (convex hull of graph nodes via [SciPy's `ConvexHull`][scipy]) is kept as a sanity check against numbers cited elsewhere.
+
+### Low-surveillance routing
+
+The routing agent (`src/agents/route_finder.py`, `src/tools/routing_tools.py`) finds walking routes that minimise camera exposure between two coordinates.
+
+1. **Pedestrian graph construction** — OSMnx downloads the walkable OSM network and caches it as GraphML at `overpass_data/.graph_cache/<sha>.graphml`. See [Boeing 2017][boeing2017].
+2. **Node snapping** — start/end coordinates are snapped to the nearest graph node using `osmnx.distance.nearest_nodes`, with a configurable haversine threshold (default 500 m).
+3. **k-shortest path generation** — `networkx.shortest_simple_paths` (Yen's algorithm) enumerates up to `max_candidates` simple paths between the snapped nodes. See [Yen 1971][yen1971], [Hagberg et al. 2008][networkx].
+4. **Exposure scoring** — each candidate path is buffered by `buffer_radius_m` (default 50 m), and cameras within the buffer are counted via a [GeoPandas / Shapely][shapely] spatial join. The exposure score is reported in cameras per kilometre.
+5. **Route selection** — the path with the minimum exposure score is returned, alongside a comparison against the unconstrained shortest path so the privacy gain is quantified rather than asserted.
+
+### References
+
+<!-- Sorted by topic so the inline citations can be skimmed in context. -->
+
+#### Clustering, density, spatial statistics
+[campello2013]: https://doi.org/10.1007/978-3-642-37456-2_14 "Campello, R. J. G. B., Moulavi, D., & Sander, J. (2013). Density-Based Clustering Based on Hierarchical Density Estimates. In Advances in Knowledge Discovery and Data Mining (PAKDD)."
+- **[Campello et al. 2013][campello2013]** — Campello, R. J. G. B., Moulavi, D., & Sander, J. (2013). *Density-Based Clustering Based on Hierarchical Density Estimates.* PAKDD. doi:10.1007/978-3-642-37456-2_14
+
+[mcinnes2017]: https://doi.org/10.21105/joss.00205 "McInnes, L., Healy, J., & Astels, S. (2017). hdbscan: Hierarchical density based clustering. JOSS 2(11), 205."
+- **[McInnes et al. 2017][mcinnes2017]** — McInnes, L., Healy, J., & Astels, S. (2017). *hdbscan: Hierarchical density based clustering.* Journal of Open Source Software, 2(11), 205. doi:10.21105/joss.00205
+
+[silverman1986]: https://www.routledge.com/Density-Estimation-for-Statistics-and-Data-Analysis/Silverman/p/book/9780412246203 "Silverman, B. W. (1986). Density Estimation for Statistics and Data Analysis. Chapman & Hall."
+- **[Silverman 1986][silverman1986]** — Silverman, B. W. (1986). *Density Estimation for Statistics and Data Analysis.* Chapman & Hall.
+
+[wand1995]: https://www.routledge.com/Kernel-Smoothing/Wand-Jones/p/book/9780412552700 "Wand, M. P., & Jones, M. C. (1995). Kernel Smoothing. Chapman & Hall."
+- **[Wand & Jones 1995][wand1995]** — Wand, M. P., & Jones, M. C. (1995). *Kernel Smoothing.* Chapman & Hall.
+
+[okabe2012]: https://doi.org/10.1002/9781119967101 "Okabe, A., & Sugihara, K. (2012). Spatial Analysis Along Networks. Wiley."
+- **[Okabe & Sugihara 2012][okabe2012]** — Okabe, A., & Sugihara, K. (2012). *Spatial Analysis Along Networks: Statistical and Computational Methods.* Wiley. doi:10.1002/9781119967101
+
+[getis1992]: https://doi.org/10.1111/j.1538-4632.1992.tb00261.x "Getis, A., & Ord, J. K. (1992). The Analysis of Spatial Association by Use of Distance Statistics. Geographical Analysis 24(3)."
+- **[Getis & Ord 1992][getis1992]** — Getis, A., & Ord, J. K. (1992). *The Analysis of Spatial Association by Use of Distance Statistics.* Geographical Analysis, 24(3), 189–206.
+
+[ord1995]: https://doi.org/10.1111/j.1538-4632.1995.tb00912.x "Ord, J. K., & Getis, A. (1995). Local Spatial Autocorrelation Statistics: Distributional Issues and an Application. Geographical Analysis 27(4)."
+- **[Ord & Getis 1995][ord1995]** — Ord, J. K., & Getis, A. (1995). *Local Spatial Autocorrelation Statistics: Distributional Issues and an Application.* Geographical Analysis, 27(4), 286–306.
+
+[bh1995]: https://doi.org/10.1111/j.2517-6161.1995.tb02031.x "Benjamini, Y., & Hochberg, Y. (1995). Controlling the False Discovery Rate. JRSS B 57(1)."
+- **[Benjamini & Hochberg 1995][bh1995]** — Benjamini, Y., & Hochberg, Y. (1995). *Controlling the False Discovery Rate: A Practical and Powerful Approach to Multiple Testing.* Journal of the Royal Statistical Society, Series B, 57(1), 289–300.
+
+#### Networks, routing, geometry
+[boeing2017]: https://doi.org/10.1016/j.compenvurbsys.2017.05.004 "Boeing, G. (2017). OSMnx. Computers, Environment and Urban Systems 65."
+- **[Boeing 2017][boeing2017]** — Boeing, G. (2017). *OSMnx: New methods for acquiring, constructing, analyzing, and visualizing complex street networks.* Computers, Environment and Urban Systems, 65, 126–139.
+
+[yen1971]: https://doi.org/10.1287/mnsc.17.11.712 "Yen, J. Y. (1971). Finding the k Shortest Loopless Paths in a Network. Management Science 17(11)."
+- **[Yen 1971][yen1971]** — Yen, J. Y. (1971). *Finding the k Shortest Loopless Paths in a Network.* Management Science, 17(11), 712–716.
+
+[networkx]: https://www.osti.gov/biblio/960616 "Hagberg, A., Schult, D., & Swart, P. (2008). Exploring network structure, dynamics, and function using NetworkX. Proceedings of SciPy 2008 (LANL/OSTI 960616)."
+- **[Hagberg et al. 2008][networkx]** — Hagberg, A., Schult, D., & Swart, P. (2008). *Exploring network structure, dynamics, and function using NetworkX.* In Proceedings of the 7th Python in Science Conference (SciPy 2008).
+
+#### Surveillance-research precedents
+[stanford2021]: https://doi.org/10.1145/3461702.3462525 "Sheng, Yao, & Goel (2021). Surveilling Surveillance: Estimating the Prevalence of Surveillance Cameras with Street View Data. AAAI/ACM AIES."
+- **[Sheng, Yao, & Goel 2021][stanford2021]** — Sheng, H., Yao, K., & Goel, S. (2021). *Surveilling Surveillance: Estimating the Prevalence of Surveillance Cameras with Street View Data.* Proceedings of the 2021 AAAI/ACM Conference on AI, Ethics, and Society (AIES). doi:10.1145/3461702.3462525
+
+[amnesty]: https://banthescan.amnesty.org/decode/ "Amnesty International (2022). Decode Surveillance NYC."
+- **[Amnesty International 2022][amnesty]** — Amnesty International. *Decode Surveillance NYC.* Crowdsourced camera-mapping project, Ban the Scan campaign.
+
+
 
 # Installation
 

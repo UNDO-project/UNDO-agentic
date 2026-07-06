@@ -12,10 +12,13 @@ downstream tool can request "give me my points in metres" without
 reasoning about EPSG codes.
 """
 
-from typing import List, Tuple
+from typing import TYPE_CHECKING, List, Tuple
 
 import numpy as np
 from pyproj import Transformer
+
+if TYPE_CHECKING:
+    from geopandas import GeoDataFrame
 
 
 def pick_utm_crs(lat: float, lon: float) -> str:
@@ -82,3 +85,26 @@ def unproject_from_utm(coords: np.ndarray, epsg: str) -> np.ndarray:
     transformer = Transformer.from_crs(epsg, "EPSG:4326", always_xy=True)
     lons, lats = transformer.transform(arr[:, 0], arr[:, 1])
     return np.column_stack([lats, lons])
+
+
+def reproject_gdf(gdf: "GeoDataFrame", target_crs: str) -> "GeoDataFrame":
+    """
+    Reproject a GeoDataFrame of *any* declared CRS to ``target_crs``.
+
+    Unlike :func:`project_to_utm` (which assumes WGS84 lat/lon tuples),
+    this works on GeoDataFrames carrying their own CRS — needed for the
+    district layer, where administrative boundaries can arrive in a
+    national grid (e.g. Sweden's EPSG:3006) rather than WGS84.
+
+    :param gdf: A GeoDataFrame with a defined ``.crs``.
+    :param target_crs: Destination CRS as an ``"EPSG:NNNNN"`` string
+        (or any pyproj-accepted identifier).
+    :return: The GeoDataFrame reprojected to ``target_crs``.
+    :raises ValueError: If ``gdf`` has no CRS set (reprojection would be
+        ambiguous).
+    """
+    if gdf.crs is None:
+        raise ValueError(
+            "reproject_gdf requires a GeoDataFrame with a defined CRS; got None"
+        )
+    return gdf.to_crs(target_crs)

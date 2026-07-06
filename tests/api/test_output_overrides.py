@@ -106,3 +106,46 @@ def test_unset_overrides_leave_preset_untouched():
     # Identical to a plain FULL preset
     full = PipelineConfig.from_scenario(AnalysisScenario.FULL)
     assert cfg.model_dump() == full.model_dump()
+
+
+def test_district_aggregation_is_opt_in_not_in_full():
+    """The district layer is opt-in — never enabled by a preset."""
+    assert (
+        PipelineConfig.from_scenario(AnalysisScenario.FULL).district_aggregation
+        is False
+    )
+    assert (
+        PipelineConfig.from_scenario(AnalysisScenario.BASIC).district_aggregation
+        is False
+    )
+
+
+def test_district_aggregation_override_layers_on():
+    """A ``district_aggregation`` override flips the opt-in layer on."""
+    overrides = OutputOverrides(district_aggregation=True).model_dump(exclude_none=True)
+    cfg = _layer_overrides(AnalysisScenario.BASIC, overrides)
+    assert cfg.district_aggregation is True
+
+
+def test_pipeline_request_carries_admin_level():
+    """``district_admin_level`` rides on the request (it's a number, not a toggle)."""
+    req = PipelineRequest(
+        city="Malmö",
+        scenario=AnalysisScenario.BASIC,
+        overrides={"district_aggregation": True},
+        district_admin_level=9,
+    )
+    assert req.district_admin_level == 9
+    assert req.overrides.district_aggregation is True
+    # Default is None so the analyzer falls back to DistrictSettings.
+    assert PipelineRequest(city="Malmö").district_admin_level is None
+
+
+def test_district_options_reach_analyzer_dict():
+    """Both district fields are threaded through ``to_analyzer_options``."""
+    cfg = PipelineConfig.from_scenario(AnalysisScenario.BASIC)
+    cfg.district_aggregation = True
+    cfg.district_admin_level = 8
+    opts = cfg.to_analyzer_options()
+    assert opts["district_aggregation"] is True
+    assert opts["district_admin_level"] == 8

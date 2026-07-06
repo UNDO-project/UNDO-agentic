@@ -108,6 +108,8 @@ class SurveillanceAnalyzerAgent:
             "plot_install_timeline": input_data.get("plot_install_timeline", False),
             "generate_report": input_data.get("generate_report", False),
             "compute_density_metrics": input_data.get("compute_density_metrics", False),
+            "district_aggregation": input_data.get("district_aggregation", False),
+            "district_admin_level": input_data.get("district_admin_level"),
             "force_rerender": input_data.get("force_rerender", False),
             # Non-bool passthrough used by the density-metrics step to
             # reach the routing agent's graph cache. ``None`` is fine —
@@ -174,6 +176,12 @@ class SurveillanceAnalyzerAgent:
                 response["density_metrics_path"] = result["density_metrics_path"]
             if "density_metrics" in result:
                 response["density_metrics"] = result["density_metrics"]
+            if "districts_geojson_path" in result:
+                response["districts_geojson_path"] = result["districts_geojson_path"]
+            if "districts_csv_path" in result:
+                response["districts_csv_path"] = result["districts_csv_path"]
+            if "districts_summary" in result:
+                response["districts_summary"] = result["districts_summary"]
 
             # Add visualization errors if any
             if "visualization_errors" in result:

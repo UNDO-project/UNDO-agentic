@@ -539,6 +539,68 @@ class AnalysisChain:
             if out is not None:
                 context["gi_star_path"] = str(out)
 
+        # District aggregation by operator class — opt-in layer that fetches
+        # OSM admin boundaries, classifies operators via the LLM, and emits
+        # ``<city>_districts.geojson`` (choropleth) + ``<city>_districts.csv``.
+        # Both artifacts are produced by one ``build_district_artifacts`` call
+        # gated on the GeoJSON's cache sidecar; on a "no boundaries" result
+        # the fn returns None so no artifact is written (opt-out).
+        if options.get("district_aggregation"):
+            from src.tools.district_aggregation import build_district_artifacts
+            from src.config.settings import DistrictSettings
+
+            geojson_path = Path(context["geojson_path"])
+            raw_path = Path(context["path"])
+            districts_geojson_path = raw_path.with_name(
+                f"{raw_path.stem}_districts.geojson"
+            )
+            districts_csv_path = raw_path.with_name(f"{raw_path.stem}_districts.csv")
+            city = raw_path.stem
+            country = options.get("country")
+            admin_level = options.get("district_admin_level")
+            if admin_level is None:
+                admin_level = DistrictSettings().default_admin_level
+
+            district_params = {
+                "method": "district_aggregation",
+                "admin_level": admin_level,
+                "country": country,
+            }
+
+            summary_cache: dict = {}
+
+            def _run_districts():
+                summary = build_district_artifacts(
+                    geojson_path,
+                    city=city,
+                    admin_level=admin_level,
+                    llm=self.llm,
+                    geojson_out=districts_geojson_path,
+                    csv_out=districts_csv_path,
+                    country=country,
+                )
+                if summary is None:
+                    return None
+                summary_cache["result"] = summary
+                return districts_geojson_path
+
+            out = self._cached_step(
+                vis_name="district aggregation",
+                error_label="District aggregation",
+                artifact_path=districts_geojson_path,
+                cache_key=visualization_cache_key(
+                    raw_hash, "districts", district_params
+                ),
+                fn=_run_districts,
+                errors=errors,
+                force_rerender=force_rerender,
+            )
+            if out is not None:
+                context["districts_geojson_path"] = str(out)
+                context["districts_csv_path"] = str(districts_csv_path)
+                if "result" in summary_cache:
+                    context["districts_summary"] = summary_cache["result"]
+
         # Headline density metrics — one small JSON with the four
         # numbers (cameras, road-km, cameras/road-km, cameras/km²).
         # Reuses the routing agent's pedestrian-graph cache so a cold

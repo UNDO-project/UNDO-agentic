@@ -143,6 +143,58 @@ def test_writers_emit_geojson_and_csv(tmp_path):
     assert int(totals[0]["police_count"]) == 1
 
 
+def test_fetch_admin_boundaries_filters_to_requested_level(monkeypatch):
+    """
+    ``features_from_place`` returns every ``boundary=administrative`` relation
+    intersecting the geocoded area — county, municipality, districts and
+    sub-districts all at once (real Malmö admin_level=9 query yields levels
+    4/7/8/9/10). ``fetch_admin_boundaries`` must keep only the requested
+    level, or the aggregation double-counts across the nested hierarchy.
+    """
+    import osmnx as ox
+
+    county = Polygon([(12.0, 55.0), (14.0, 55.0), (14.0, 56.0), (12.0, 56.0)])
+    kommun = Polygon([(13.0, 55.5), (13.3, 55.5), (13.3, 55.8), (13.0, 55.8)])
+    d1 = Polygon([(13.0, 55.6), (13.1, 55.6), (13.1, 55.7), (13.0, 55.7)])
+    d2 = Polygon([(13.1, 55.6), (13.2, 55.6), (13.2, 55.7), (13.1, 55.7)])
+    sub = Polygon([(13.05, 55.65), (13.07, 55.65), (13.07, 55.67), (13.05, 55.67)])
+    mixed = gpd.GeoDataFrame(
+        {
+            "name": ["Skåne län", "Malmö kommun", "Norr", "Söder", "Östervärn"],
+            "admin_level": ["4", "7", "9", "9", "10"],
+            "geometry": [county, kommun, d1, d2, sub],
+        },
+        geometry="geometry",
+        crs="EPSG:4326",
+    )
+
+    monkeypatch.setattr(ox, "features_from_place", lambda *a, **k: mixed)
+
+    gdf = fetch_admin_boundaries("Malmö", admin_level=9, country="Sweden")
+    assert set(gdf["name"]) == {"Norr", "Söder"}  # only the level-9 pair
+    assert "Skåne län" not in set(gdf["name"])  # county dropped
+    assert "Malmö kommun" not in set(gdf["name"])  # municipality dropped
+
+
+def test_fetch_admin_boundaries_empty_when_level_absent(monkeypatch):
+    """A requested level with no matching boundary yields an empty frame."""
+    import osmnx as ox
+
+    only7 = gpd.GeoDataFrame(
+        {
+            "name": ["Malmö kommun"],
+            "admin_level": ["7"],
+            "geometry": [Polygon([(13.0, 55.5), (13.3, 55.5), (13.3, 55.8)])],
+        },
+        geometry="geometry",
+        crs="EPSG:4326",
+    )
+    monkeypatch.setattr(ox, "features_from_place", lambda *a, **k: only7)
+
+    gdf = fetch_admin_boundaries("Malmö", admin_level=9, country="Sweden")
+    assert gdf.empty
+
+
 @pytest.mark.slow
 def test_fetch_admin_boundaries_network():
     """Live OSM fetch — excluded from the default ``-m 'not slow'`` run."""

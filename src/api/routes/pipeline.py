@@ -291,6 +291,10 @@ async def execute_pipeline_task(task_id: str, request: PipelineRequest) -> None:
         }
         if request.overrides is not None:
             config_kwargs.update(request.overrides.model_dump(exclude_none=True))
+        # admin_level is a number, not a boolean toggle, so it rides on the
+        # request directly rather than through OutputOverrides.
+        if request.district_admin_level is not None:
+            config_kwargs["district_admin_level"] = request.district_admin_level
 
         # Add routing config if provided
         if request.routing_config:

@@ -283,6 +283,12 @@ def mock_hotspot_artifacts(tmp_path, monkeypatch):
     (output_dir / f"{TEST_CITY}_gi_star.geojson").write_text(empty_fc)
     (output_dir / f"{TEST_CITY}_hotspots.geojson").write_text(empty_fc)
     (output_dir / f"{TEST_CITY}_hotspot_polygons.geojson").write_text(empty_fc)
+    (output_dir / f"{TEST_CITY}_districts.geojson").write_text(empty_fc)
+    (output_dir / f"{TEST_CITY}_districts.csv").write_text(
+        "name,admin_level,total_cameras,police_count,"
+        "other_identified_count,untagged_count,untagged_share\n"
+        "__ALL__,,0,0,0,0,0.0\n"
+    )
     (output_dir / f"{TEST_CITY}_density_metrics.json").write_text(
         json.dumps(
             {
@@ -322,6 +328,8 @@ HOTSPOT_ROUTE_CASES = [
         "_hotspot_polygons.geojson",
         "application/geo+json",
     ),
+    ("districts.geojson", "_districts.geojson", "application/geo+json"),
+    ("districts.csv", "_districts.csv", "text/csv; charset=utf-8"),
 ]
 
 
@@ -392,6 +400,8 @@ def test_list_city_files_includes_all_hotspot_artifacts(mock_hotspot_artifacts):
         f"{TEST_CITY}_gi_star.geojson",
         f"{TEST_CITY}_hotspots.geojson",
         f"{TEST_CITY}_hotspot_polygons.geojson",
+        f"{TEST_CITY}_districts.geojson",
+        f"{TEST_CITY}_districts.csv",
     }
     assert expected <= names
 

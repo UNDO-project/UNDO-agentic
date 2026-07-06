@@ -107,6 +107,27 @@ Examples:
         ),
     )
     parser.add_argument(
+        "--district-aggregation",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        dest="district_aggregation",
+        help=(
+            "Aggregate cameras into OSM administrative districts by operator "
+            "class and emit <city>_districts.geojson + <city>_districts.csv. "
+            "Opt-in (off by default; not part of --scenario full)."
+        ),
+    )
+    parser.add_argument(
+        "--district-admin-level",
+        type=int,
+        default=None,
+        dest="district_admin_level",
+        help=(
+            "OSM admin_level to fetch for district aggregation (varies by "
+            "country). Defaults to DistrictSettings.default_admin_level."
+        ),
+    )
+    parser.add_argument(
         "--output-dir",
         help="Output directory for results",
         default=None,
@@ -340,6 +361,12 @@ def display_results(results: dict):
             files_table.add_row("Gi* Plot", str(analyze["gi_star_chart"]))
         if analyze.get("density_metrics_path"):
             files_table.add_row("Density Metrics", str(analyze["density_metrics_path"]))
+        if analyze.get("districts_geojson_path"):
+            files_table.add_row(
+                "Districts GeoJSON", str(analyze["districts_geojson_path"])
+            )
+        if analyze.get("districts_csv_path"):
+            files_table.add_row("Districts CSV", str(analyze["districts_csv_path"]))
         if analyze.get("chart_path"):
             files_table.add_row("Statistics Chart", str(analyze["chart_path"]))
 
@@ -420,6 +447,10 @@ def main():
         config_kwargs["generate_report"] = args.report
     if args.density_metrics is not None:
         config_kwargs["compute_density_metrics"] = args.density_metrics
+    if args.district_aggregation is not None:
+        config_kwargs["district_aggregation"] = args.district_aggregation
+    if args.district_admin_level is not None:
+        config_kwargs["district_admin_level"] = args.district_admin_level
 
     # Routing configuration
     if args.enable_routing:

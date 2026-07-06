@@ -19,6 +19,7 @@ import pytest
 from src.tools.geo_projection import (
     pick_utm_crs,
     project_to_utm,
+    reproject_gdf,
     unproject_from_utm,
 )
 
@@ -107,3 +108,32 @@ class TestUnprojectFromUTM:
     def test_empty_array_returns_empty(self):
         result = unproject_from_utm(np.empty((0, 2)), "EPSG:32633")
         assert result.shape == (0, 2)
+
+
+class TestReprojectGdf:
+    """``reproject_gdf`` handles arbitrary-CRS GeoDataFrames (district layer)."""
+
+    def test_reproject_from_national_grid_to_wgs84(self):
+        import geopandas as gpd
+        from shapely.geometry import Point
+
+        # A point in SWEREF99 TM (EPSG:3006, Sweden) — the CRS the Malmö
+        # RegSO example ships in — should land near Malmö in WGS84.
+        gdf = gpd.GeoDataFrame(
+            {"geometry": [Point(373000, 6164000)]},
+            geometry="geometry",
+            crs="EPSG:3006",
+        )
+        out = reproject_gdf(gdf, "EPSG:4326")
+        assert str(out.crs).upper().endswith("4326")
+        lon, lat = out.geometry.iloc[0].x, out.geometry.iloc[0].y
+        assert 12.5 < lon < 13.5
+        assert 55.3 < lat < 55.9
+
+    def test_missing_crs_raises(self):
+        import geopandas as gpd
+        from shapely.geometry import Point
+
+        gdf = gpd.GeoDataFrame({"geometry": [Point(0, 0)]}, geometry="geometry")
+        with pytest.raises(ValueError):
+            reproject_gdf(gdf, "EPSG:4326")

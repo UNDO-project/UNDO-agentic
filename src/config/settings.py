@@ -205,6 +205,36 @@ class HotspotSettings(BaseSettings):
     )
 
 
+class DistrictSettings(BaseSettings):
+    """
+    Configuration for the administrative-district aggregation layer.
+
+    ``admin_level`` semantics vary by country, so the default is a
+    starting point rather than a universal truth — override per city via
+    the CLI ``--district-admin-level`` flag or ``DISTRICT_DEFAULT_ADMIN_LEVEL``.
+    """
+
+    default_admin_level: int = Field(
+        default=9,
+        description=(
+            "OSM admin_level fetched for districts when the caller does "
+            "not specify one. 9 is a common city-district level; adjust "
+            "per country (e.g. 7/8 for municipalities)."
+        ),
+    )
+
+    @field_validator("default_admin_level")
+    @classmethod
+    def _validate_admin_level(cls, value: int) -> int:
+        if not 1 <= value <= 12:
+            raise ValueError("default_admin_level must be between 1 and 12")
+        return value
+
+    model_config = SettingsConfigDict(
+        env_file=".env", env_prefix="DISTRICT_", extra="allow"
+    )
+
+
 class RouteSettings(BaseSettings):
     """
     Configuration for the low-surveillance routing logic.

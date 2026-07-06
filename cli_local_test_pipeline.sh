@@ -90,6 +90,16 @@ pytest tests/tools/test_spatial_stats.py
 echo "Done..."
 echo "==============================================="
 
+echo "Running operator classification tests"
+pytest tests/tools/test_operator_classification.py
+echo "Done..."
+echo "==============================================="
+
+echo "Running district aggregation tests"
+pytest tests/tools/test_district_aggregation.py
+echo "Done..."
+echo "==============================================="
+
 echo "Running density-metrics tests (cameras-per-road-km)"
 pytest tests/tools/test_density_metrics.py
 echo "Done..."

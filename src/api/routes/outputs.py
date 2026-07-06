@@ -225,6 +225,8 @@ _HOTSPOT_ARTIFACTS: dict = {
     "gi_star.geojson": "_gi_star.geojson",
     "hotspots.geojson": "_hotspots.geojson",
     "hotspot_polygons.geojson": "_hotspot_polygons.geojson",
+    "districts.geojson": "_districts.geojson",
+    "districts.csv": "_districts.csv",
 }
 
 
@@ -280,6 +282,18 @@ async def get_city_hotspots_geojson(city: str):
 async def get_city_hotspot_polygons_geojson(city: str):
     """Serve the HDBSCAN convex hulls: ``<city>_hotspot_polygons.geojson``."""
     return _serve_named_artifact(city, _HOTSPOT_ARTIFACTS["hotspot_polygons.geojson"])
+
+
+@router.get("/{city}/districts.geojson")
+async def get_city_districts_geojson(city: str):
+    """Serve the district choropleth layer: ``<city>_districts.geojson``."""
+    return _serve_named_artifact(city, _HOTSPOT_ARTIFACTS["districts.geojson"])
+
+
+@router.get("/{city}/districts.csv")
+async def get_city_districts_csv(city: str):
+    """Serve the per-district operator-class table: ``<city>_districts.csv``."""
+    return _serve_named_artifact(city, _HOTSPOT_ARTIFACTS["districts.csv"])
 
 
 @router.get("/{city}/report")

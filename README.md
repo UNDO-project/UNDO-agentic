@@ -2,6 +2,38 @@
 
 A multi-agent system for analyzing surveillance infrastructure and computing privacy-preserving walking routes in urban environments using OpenStreetMap data. The system operates completely locally without external APIs and provides both CLI and REST API interfaces.
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Methodology](#methodology)
+  - [Data acquisition](#data-acquisition)
+  - [LLM enrichment](#llm-enrichment)
+  - [Hotspot analysis (four layers)](#hotspot-analysis-four-layers)
+  - [District aggregation by operator (opt-in)](#district-aggregation-by-operator-opt-in)
+  - [Low-surveillance routing](#low-surveillance-routing)
+  - [References](#references)
+- [Installation](#installation)
+  - [Prerequisites](#prerequisites)
+  - [Testing](#testing)
+  - [Code formatting](#code-formatting)
+  - [Ollama client](#ollama-client)
+- [Usage](#usage)
+  - [Basic Usage](#basic-usage)
+  - [Analysis Scenarios](#analysis-scenarios)
+  - [Low-Surveillance Routing](#low-surveillance-routing-1)
+  - [Advanced Options](#advanced-options)
+  - [Output Files](#output-files)
+- [FastAPI Web Interface](#fastapi-web-interface)
+  - [Running the API Server](#running-the-api-server)
+  - [API Features](#api-features)
+  - [API Endpoints](#api-endpoints)
+  - [API Usage Examples](#api-usage-examples)
+  - [Docker Deployment](#docker-deployment)
+  - [API Testing](#api-testing)
+- [Architecture](#architecture)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
+
 ## Overview
 
 The pipeline consists of three main agents:
@@ -45,6 +77,14 @@ Each layer answers a different question — they complement rather than replace 
 4. **Cameras per road-km** (`<city>_density_metrics.json`, `src/tools/density_metrics.py`)
    Stanford Computational Policy Lab's [*Surveilling Surveillance*][stanford2021] (2021) made cameras-per-linear-km of road the canonical headline for cross-city camera prevalence (0.2 in Los Angeles to 0.9 in Seoul). The motivation is that `cameras / km²` is sensitive to how much park, water, or other unbuilt land falls inside a city's polygon — those areas inflate the denominator without contributing cameras to the numerator. Normalising by road length compares infrastructure to infrastructure. This project follows that approach but uses the **OSMnx pedestrian graph** (rather than all roads), since the question we care about is what someone walking past gets exposed to. Reuses the routing agent's cached graph so the metric and routing layer share one OSM download. A secondary `cameras / km²` (convex hull of graph nodes via [SciPy's `ConvexHull`][scipy]) is kept as a sanity check against numbers cited elsewhere.
 
+### District aggregation by operator (opt-in)
+
+An opt-in layer (`src/tools/district_aggregation.py`) aggregates cameras into administrative districts and classifies each by its operator, reproducing the "police cameras per district" distribution the class analysis in [*Decode Surveillance NYC*][amnesty] rests on. It is off by default (it needs an extra OSM fetch) — enable it with `--district-aggregation` (CLI) or `{"overrides": {"district_aggregation": true}}` (API).
+
+- **Districts from OSM, not a file.** `boundary=administrative` polygons are pulled from OpenStreetMap at a configurable `admin_level` (`--district-admin-level`, default `DistrictSettings.default_admin_level=9`) via OSMnx — the same dependency the routing layer uses. This keeps the layer self-contained and city-agnostic; OSM's `name` tag supplies the district names for any city. `admin_level` semantics vary by country, so it is never hardcoded.
+- **Operator classification is LLM-driven** (`src/tools/operator_classification.py`), so it generalises across languages (`Polismyndigheten`, `Politi`, `Polizei`, `Police`, …) and real-data misspellings without a hardcoded alias list. The distinct operator strings are classified once into `police` / `other_identified`; `untagged` (missing operator) is handled deterministically. The `operator → class` mapping is logged for audit.
+- **Outputs** (`<city>_districts.geojson` + `<city>_districts.csv`): per district — `total_cameras`, `police_count`, `other_identified_count`, `untagged_count`, `untagged_share` — plus a citywide summary (including the count of cameras falling outside every district). Camera points and boundaries are reprojected to a common UTM CRS for the point-in-polygon join; output geometry is emitted in EPSG:4326.
+
 ### Low-surveillance routing
 
 The routing agent (`src/agents/route_finder.py`, `src/tools/routing_tools.py`) finds walking routes that minimise camera exposure between two coordinates.
@@ -56,6 +96,9 @@ The routing agent (`src/agents/route_finder.py`, `src/tools/routing_tools.py`) f
 5. **Route selection** — the path with the minimum exposure score is returned, alongside a comparison against the unconstrained shortest path so the privacy gain is quantified rather than asserted.
 
 ### References
+
+<details>
+<summary>Bibliography &amp; software citations (click to expand)</summary>
 
 <!-- Sorted by topic so the inline citations can be skimmed in context. -->
 
@@ -84,6 +127,18 @@ The routing agent (`src/agents/route_finder.py`, `src/tools/routing_tools.py`) f
 [bh1995]: https://doi.org/10.1111/j.2517-6161.1995.tb02031.x "Benjamini, Y., & Hochberg, Y. (1995). Controlling the False Discovery Rate. JRSS B 57(1)."
 - **[Benjamini & Hochberg 1995][bh1995]** — Benjamini, Y., & Hochberg, Y. (1995). *Controlling the False Discovery Rate: A Practical and Powerful Approach to Multiple Testing.* Journal of the Royal Statistical Society, Series B, 57(1), 289–300.
 
+[kdepy]: https://github.com/tommyod/KDEpy "Odland, T. KDEpy: Kernel Density Estimation in Python."
+- **[KDEpy][kdepy]** — Odland, T. *KDEpy: Kernel Density Estimation in Python.* https://github.com/tommyod/KDEpy
+
+[h3]: https://h3geo.org/ "Uber Technologies. H3: A Hexagonal Hierarchical Geospatial Indexing System."
+- **[H3][h3]** — Uber Technologies. *H3: A Hexagonal Hierarchical Geospatial Indexing System.* https://h3geo.org/
+
+[pysal]: https://pysal.org/libpysal/ "libpysal: PySAL core spatial-weights library."
+- **[libpysal][pysal]** — *libpysal: Core spatial-weights and computational-geometry library of the Python Spatial Analysis Library (PySAL).* https://pysal.org/libpysal/
+
+[esda]: https://pysal.org/esda/ "esda: Exploratory Spatial Data Analysis (PySAL)."
+- **[esda][esda]** — *esda: Exploratory Spatial Data Analysis in the Python Spatial Analysis Library (PySAL).* https://pysal.org/esda/
+
 #### Networks, routing, geometry
 [boeing2017]: https://doi.org/10.1016/j.compenvurbsys.2017.05.004 "Boeing, G. (2017). OSMnx. Computers, Environment and Urban Systems 65."
 - **[Boeing 2017][boeing2017]** — Boeing, G. (2017). *OSMnx: New methods for acquiring, constructing, analyzing, and visualizing complex street networks.* Computers, Environment and Urban Systems, 65, 126–139.
@@ -94,6 +149,12 @@ The routing agent (`src/agents/route_finder.py`, `src/tools/routing_tools.py`) f
 [networkx]: https://www.osti.gov/biblio/960616 "Hagberg, A., Schult, D., & Swart, P. (2008). Exploring network structure, dynamics, and function using NetworkX. Proceedings of SciPy 2008 (LANL/OSTI 960616)."
 - **[Hagberg et al. 2008][networkx]** — Hagberg, A., Schult, D., & Swart, P. (2008). *Exploring network structure, dynamics, and function using NetworkX.* In Proceedings of the 7th Python in Science Conference (SciPy 2008).
 
+[shapely]: https://shapely.readthedocs.io/ "Gillies, S., et al. Shapely: manipulation and analysis of geometric objects."
+- **[Shapely][shapely]** — Gillies, S., et al. *Shapely: Manipulation and analysis of geometric objects in the Cartesian plane.* https://shapely.readthedocs.io/ (used together with [GeoPandas](https://geopandas.org/) for the spatial join).
+
+[scipy]: https://docs.scipy.org/doc/scipy/reference/generated/scipy.spatial.ConvexHull.html "Virtanen, P., et al. (2020). SciPy 1.0: scipy.spatial.ConvexHull."
+- **[SciPy ConvexHull][scipy]** — Virtanen, P., et al. (2020). *SciPy 1.0: Fundamental Algorithms for Scientific Computing in Python* — `scipy.spatial.ConvexHull`. Nature Methods, 17, 261–272.
+
 #### Surveillance-research precedents
 [stanford2021]: https://doi.org/10.1145/3461702.3462525 "Sheng, Yao, & Goel (2021). Surveilling Surveillance: Estimating the Prevalence of Surveillance Cameras with Street View Data. AAAI/ACM AIES."
 - **[Sheng, Yao, & Goel 2021][stanford2021]** — Sheng, H., Yao, K., & Goel, S. (2021). *Surveilling Surveillance: Estimating the Prevalence of Surveillance Cameras with Street View Data.* Proceedings of the 2021 AAAI/ACM Conference on AI, Ethics, and Society (AIES). doi:10.1145/3461702.3462525
@@ -101,9 +162,12 @@ The routing agent (`src/agents/route_finder.py`, `src/tools/routing_tools.py`) f
 [amnesty]: https://banthescan.amnesty.org/decode/ "Amnesty International (2022). Decode Surveillance NYC."
 - **[Amnesty International 2022][amnesty]** — Amnesty International. *Decode Surveillance NYC.* Crowdsourced camera-mapping project, Ban the Scan campaign.
 
-
+</details>
 
 # Installation
+
+<details>
+<summary>Prerequisites &amp; environment setup (click to expand)</summary>
 
 ## Prerequisites
 
@@ -164,6 +228,8 @@ uv add name-of-dependency
 ```commandline
 uv sync
 ```
+
+</details>
 
 ## Testing:
 In order to run the tests from the root project run:
@@ -230,15 +296,20 @@ python main.py Munich --scenario basic --heatmap --no-charts
 
 Two presets are available:
 
-- `basic` (default): enriched data + summary statistics
-- `full`: every output enabled (heatmap, hotspots, charts, stats)
+- `basic` (default): enriched data + summary statistics + cameras-per-road-km
+- `full`: every preset output enabled (heatmap, HDBSCAN hotspots, Gi\* hex grid, all charts, density metrics, and the LLM city report)
 
 Override individual outputs from either preset using CLI toggle flags
 (or the `overrides` field on the API request body):
 
-- `--heatmap` / `--no-heatmap`
-- `--hotspots` / `--no-hotspots` (DBSCAN clusters + scatter plot)
-- `--charts` / `--no-charts` (privacy pie + zone-sensitivity + sensitivity-reasons)
+- `--heatmap` / `--no-heatmap` (KDE heatmap + density contours)
+- `--hotspots` / `--no-hotspots` (HDBSCAN clusters + scatter plot)
+- `--gi-star` / `--no-gi-star` (Getis-Ord Gi\* hex grid + choropleth)
+- `--charts` / `--no-charts` (privacy pie + zone-sensitivity + sensitivity-reasons + operator/manufacturer distributions + install timeline)
+- `--report` / `--no-report` (LLM-written markdown city report)
+- `--density-metrics` / `--no-density-metrics` (cameras-per-road-km headline JSON; on by default)
+- `--district-aggregation` / `--no-district-aggregation` (opt-in operator-by-district choropleth; **not** part of the `full` preset)
+- `--district-admin-level N` (OSM `admin_level` for district aggregation; defaults to `DistrictSettings.default_admin_level`)
 
 > **Migration note:** the previous `quick`, `report`, and `mapping` scenarios
 > were removed. `quick` was identical to `basic`; `report` and `mapping` are
@@ -320,9 +391,13 @@ The system generates files in `overpass_data/<city>/` organized by function:
 **Analysis Outputs:**
 - **Enriched JSON** (`<city>_enriched.json`): Original data enhanced with LLM analysis
 - **GeoJSON** (`<city>_enriched.geojson`): Geographic data for mapping applications
-- **Heatmap** (`<city>_heatmap.html`): Interactive spatial density visualization
-- **Hotspots** (`hotspots_<city>.geojson`, `hotspot_plot_<city>.png`): DBSCAN clustering results
-- **Statistics** (`stats_chart_<city>.png`): Summary charts and metrics
+- **Heatmap + density contours** (`<city>_heatmap.html`, `<city>_density.geojson`): KDE density surface (heatmap + 50/75/90/95 percentile contours)
+- **HDBSCAN hotspots** (`<city>_hotspots.geojson`, `<city>_hotspot_polygons.geojson`, `<city>_hotspots.png`): density-based cluster centroids, convex hulls, and scatter plot
+- **Gi\* hex grid** (`<city>_gi_star.geojson`, `<city>_gi_star.png`): Getis-Ord Gi\* hot/cold classification + choropleth
+- **Density metrics** (`<city>_density_metrics.json`): headline cameras-per-road-km + cameras-per-km²
+- **District aggregation** (`<city>_districts.geojson`, `<city>_districts.csv`): opt-in operator-by-district choropleth + table (police / other / untagged per district)
+- **Statistic charts** (`<city>_privacy.png`, `<city>_zone_sensitivity.png`, `<city>_sensitivity_reasons.png`, `<city>_operator_distribution.png`, `<city>_manufacturer_distribution.png`, `<city>_install_timeline.png`): per-city distribution charts
+- **City report** (`<city>_report.md`): LLM-written markdown summary
 
 **Routing Outputs** (in `routes/` subdirectory):
 - **Route GeoJSON** (`route_<hash>.geojson`): Route geometry with exposure metrics and nearby camera IDs
@@ -334,9 +409,13 @@ The system generates files in `overpass_data/<city>/` organized by function:
 
 **Cache Files:**
 - **OSM Graphs** (`.graph_cache/<hash>.graphml`): Cached pedestrian networks
-- **Agent Memory** (`memory.db`): SQLite database storing route and query caches
+- **Agent Memory** (`agents_memory.db`): SQLite database storing scrape, route, and query caches
+- **Per-artifact sidecars** (`<file>.cache.json`): let the pipeline skip re-rendering an artifact when its inputs are unchanged
 
 ## FastAPI Web Interface
+
+<details>
+<summary>REST API server, endpoints, examples &amp; deployment (click to expand)</summary>
 
 In addition to the CLI, the system provides a production-ready REST API for programmatic access to all functionality.
 
@@ -492,6 +571,17 @@ Download enriched GeoJSON file for a city.
 GET /api/v1/outputs/{city}/map?map_type=heatmap
 ```
 Get interactive HTML heatmap. Options: `heatmap`, `hotspots`.
+
+```http
+GET /api/v1/outputs/{city}/density.geojson
+GET /api/v1/outputs/{city}/gi_star.geojson
+GET /api/v1/outputs/{city}/hotspots.geojson
+GET /api/v1/outputs/{city}/hotspot_polygons.geojson
+GET /api/v1/outputs/{city}/density_metrics.json
+GET /api/v1/outputs/{city}/districts.geojson
+GET /api/v1/outputs/{city}/districts.csv
+```
+Named hotspot-layer and district-aggregation artifacts, each served by its exact on-disk filename. Return 404 when the layer wasn't generated for the city (e.g. `districts.*` without `--district-aggregation`).
 
 ```http
 GET /api/v1/outputs/{city}/route?format=map
@@ -691,6 +781,8 @@ This runs 67 tests covering:
 - WebSocket (8 tests)
 - Output file serving (20 tests)
 
+</details>
+
 ## Architecture
 
 ### Agent-Based Design
@@ -745,6 +837,9 @@ class RouteSettings:
 
 ## Troubleshooting
 
+<details>
+<summary>Common issues &amp; fixes (click to expand)</summary>
+
 ### Routing Performance
 
 **Symptom:** First routing attempt for a city takes 10-30+ minutes
@@ -777,6 +872,8 @@ class RouteSettings:
 ```bash
 python main.py --help
 ```
+
+</details>
 
 ## Contributing
 

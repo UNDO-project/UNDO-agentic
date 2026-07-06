@@ -80,6 +80,14 @@ class OutputOverrides(BaseModel):
             "(<city>_density_metrics.json)."
         ),
     )
+    district_aggregation: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Aggregate cameras into OSM administrative districts by "
+            "operator class and emit <city>_districts.geojson + "
+            "<city>_districts.csv. Opt-in; not part of the FULL preset."
+        ),
+    )
 
 
 class ScrapeRequest(BaseModel):
@@ -253,6 +261,13 @@ class PipelineRequest(BaseModel):
     routing_config: Optional[RouteComputeRequest] = Field(
         default=None,
         description="Optional routing configuration (enables routing when provided)",
+    )
+    district_admin_level: Optional[int] = Field(
+        default=None,
+        description=(
+            "OSM admin_level to fetch when district_aggregation is enabled. "
+            "When unset, falls back to DistrictSettings.default_admin_level."
+        ),
     )
     force_refresh: bool = Field(
         default=False,

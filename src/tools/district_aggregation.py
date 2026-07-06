@@ -82,6 +82,25 @@ def fetch_admin_boundaries(
     if gdf.empty:
         return _empty_boundaries()
 
+    # ``features_from_place`` does NOT filter on the ``admin_level`` tag —
+    # it returns every ``boundary=administrative`` relation intersecting the
+    # geocoded area at once (county, municipality, districts, sub-districts).
+    # Aggregating over that nested mix double-counts every camera across the
+    # hierarchy, so we must keep only the requested level here; that is what
+    # makes the layer a clean, non-overlapping partition.
+    if "admin_level" not in gdf.columns:
+        logger.warning(
+            f"OSM boundaries for {location_str} carry no admin_level tag; "
+            "skipping district aggregation."
+        )
+        return _empty_boundaries()
+    gdf = gdf[gdf["admin_level"].astype(str) == str(admin_level)].copy()
+    if gdf.empty:
+        logger.warning(
+            f"No OSM boundaries at admin_level={admin_level} for {location_str}."
+        )
+        return _empty_boundaries()
+
     if "name" not in gdf.columns:
         gdf["name"] = None
     gdf["name"] = [

@@ -135,6 +135,23 @@ class PipelineConfig(BaseModel):
             "first run downloads it. Cheap enough to default on."
         ),
     )
+    district_aggregation: bool = Field(
+        default=False,
+        description=(
+            "Aggregate cameras into OSM administrative districts by "
+            "operator class (police / other / untagged) and emit "
+            "<city>_districts.geojson + <city>_districts.csv. Opt-in — "
+            "requires an extra OSM fetch, so it is not part of the FULL "
+            "preset."
+        ),
+    )
+    district_admin_level: Optional[int] = Field(
+        default=None,
+        description=(
+            "OSM admin_level to fetch for district aggregation. When "
+            "None, falls back to DistrictSettings.default_admin_level."
+        ),
+    )
 
     # Pipeline behavior
     stop_on_error: bool = Field(
@@ -234,5 +251,7 @@ class PipelineConfig(BaseModel):
             "plot_install_timeline": self.plot_install_timeline,
             "generate_report": self.generate_report,
             "compute_density_metrics": self.compute_density_metrics,
+            "district_aggregation": self.district_aggregation,
+            "district_admin_level": self.district_admin_level,
             "force_rerender": self.force_rerender,
         }
